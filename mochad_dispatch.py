@@ -1,18 +1,20 @@
 import asyncio
 import daemonize
 import sys
+import os
 import time
-import logging, logging.handlers
-
+import argparse
+import urllib.parse
 
 
 class MochadClient:
     """ MochadClient object
     
     """
-    def __init__(self, host, logger):
+    def __init__(self, host, logger, entry_point):
         self.host = host
         self.logger = logger
+        self.entry_point = entry_point
         self.reconnect_time = 0
         self.reader = None
         self.writer = None
@@ -32,11 +34,12 @@ class MochadClient:
                 break
             # dispatch RFSEC messages
             if line[15:23] == b'Rx RFSEC':
-                asyncio.Task(self.dispatch_message(line.decode("utf-8")))
+                asyncio.Task(self.dispatch_message(line.decode("utf-8").rstrip()))
 
     @asyncio.coroutine
     def dispatch_message(self, message):
-        self.logger.info(message)
+        self.logger.info("Dispatching '{}' to '{}'".format(message,
+                                                           self.entry_point))
 
     @asyncio.coroutine
     def worker(self):
@@ -70,13 +73,30 @@ class MochadClient:
             self.reconnect_time = time.time()
 
 def daemon_main():
-    mochad_client = MochadClient("127.0.0.1", daemon.logger)
+    mochad_client = MochadClient("127.0.0.1", daemon.logger, args.entry_point)
     loop = asyncio.get_event_loop()
     loop.run_until_complete(mochad_client.worker())
 
+def errordie(message):
+    prog = os.path.basename(sys.argv[0])
+    sys.stderr.write("{}: error: {}\n".format(prog, message))
+    sys.exit(1)
 
 
 if __name__ == "__main__":
+    # parse command line args
+    parser = argparse.ArgumentParser()
+    parser.add_argument('entry_point',
+                       help='REST API entry point URL')
+    args = parser.parse_args()
+
+    # validate entry_point URL
+    parse_res = urllib.parse.urlparse(args.entry_point)
+    # bail out if the url scheme is anything but HTTP(S)
+    if not parse_res.scheme == 'https' and not parse_res.scheme == 'http':
+        errordie("unsupported URL scheme '{}'".format(parse_res.scheme))
+
+    # daemonize
     daemon = daemonize.Daemonize(app="mochad_dispatch", 
                                  pid="/var/run/mochad_dispatch.pid",
                                  action=daemon_main)
