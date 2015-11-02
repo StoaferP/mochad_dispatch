@@ -38,8 +38,12 @@ class MochadClient:
 
     @asyncio.coroutine
     def dispatch_message(self, message):
-        self.logger.info("Dispatching '{}' to '{}'".format(message,
-                                                           self.entry_point))
+        # decode message
+        # 09/22 15:39:07 Rx RFSEC Addr: 21:26:80 Func: Contact_alert_min_DS10A
+        timestamp = message[0:14]
+        addr = message[30:38]
+        func = message[45:]
+        self.logger.info("timestamp {} address {} func {}".format(timestamp, addr, func))
 
     @asyncio.coroutine
     def worker(self):
