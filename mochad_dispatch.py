@@ -1,8 +1,10 @@
 import asyncio
+import aiohttp
 import daemonize
 import sys
 import os
 import time
+import datetime
 import argparse
 import urllib.parse
 
@@ -14,10 +16,15 @@ class MochadClient:
     def __init__(self, host, logger, entry_point):
         self.host = host
         self.logger = logger
-        self.entry_point = entry_point
         self.reconnect_time = 0
         self.reader = None
         self.writer = None
+        self.entry_point = entry_point
+
+        # ensure entry point ends with /
+        if not self.entry_point[-1] == '/':
+            self.entry_point = self.entry_point + '/'
+
 
     @asyncio.coroutine
     def connect(self):
@@ -34,16 +41,32 @@ class MochadClient:
                 break
             # dispatch RFSEC messages
             if line[15:23] == b'Rx RFSEC':
-                asyncio.Task(self.dispatch_message(line.decode("utf-8").rstrip()))
+                asyncio.Task(self.dispatch_message(
+                        line.decode("utf-8").rstrip()))
 
     @asyncio.coroutine
     def dispatch_message(self, message):
         # decode message
-        # 09/22 15:39:07 Rx RFSEC Addr: 21:26:80 Func: Contact_alert_min_DS10A
-        timestamp = message[0:14]
+        #   09/22 15:39:07 Rx RFSEC Addr: 21:26:80 Func: Contact_alert_min_DS10A
+        # do not to use mochad's timestamp because it lacks a year
+        epoch_time = time.time()
         addr = message[30:38]
         func = message[45:]
-        self.logger.info("timestamp {} address {} func {}".format(timestamp, addr, func))
+
+        post_data = "epoch_time={};func={}".format(epoch_time, func)
+        headers = {'content-type': 'application/x-www-form-urlencoded'}
+        try:
+            response = yield from aiohttp.post(
+                             "{}{}".format(self.entry_point, addr),
+                             data=post_data,
+                             headers=headers)
+            if response.status != 200:
+                fail_msg = "HTTP status {}".format(response.status)
+        except Exception as e:
+            fail_msg = "Caught exception: {}".format(e)
+
+        if hasattr(obj, fail_msg):
+            self.logger.info("dispatch failed: {} epoch time {} address {} func {}".format(fail_msg, epoch_time, addr, func))
 
     @asyncio.coroutine
     def worker(self):
@@ -90,8 +113,10 @@ def errordie(message):
 if __name__ == "__main__":
     # parse command line args
     parser = argparse.ArgumentParser()
-    parser.add_argument('entry_point',
-                       help='REST API entry point URL')
+    parser.add_argument('-f', '--foreground',
+            action='store_true', default=False,
+            help="Don't fork; run in foreground (for debugging)")
+    parser.add_argument('entry_point', help='REST API entry point URL')
     args = parser.parse_args()
 
     # validate entry_point URL
@@ -102,6 +127,7 @@ if __name__ == "__main__":
 
     # daemonize
     daemon = daemonize.Daemonize(app="mochad_dispatch", 
-                                 pid="/var/run/mochad_dispatch.pid",
+                                 pid="/tmp/mochad_dispatch.pid",
+                                 foreground=args.foreground,
                                  action=daemon_main)
     daemon.start()
