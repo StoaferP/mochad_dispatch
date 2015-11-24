@@ -4,7 +4,8 @@ import daemonize
 import sys
 import os
 import time
-import datetime
+from datetime import datetime
+import pytz
 import argparse
 import urllib.parse
 
@@ -49,11 +50,12 @@ class MochadClient:
         # decode message
         #   09/22 15:39:07 Rx RFSEC Addr: 21:26:80 Func: Contact_alert_min_DS10A
         # do not to use mochad's timestamp because it lacks a year
-        epoch_time = time.time()
+        dispatch_time = datetime.now(pytz.UTC).isoformat()
         addr = message[30:38]
         func = message[45:]
+        fail_msg = ''
 
-        post_data = "epoch_time={};func={}".format(epoch_time, func)
+        post_data = "dispatch_time={};func={}".format(dispatch_time, func)
         headers = {'content-type': 'application/x-www-form-urlencoded'}
         try:
             response = yield from aiohttp.post(
@@ -62,11 +64,15 @@ class MochadClient:
                              headers=headers)
             if response.status != 200:
                 fail_msg = "HTTP status {}".format(response.status)
+            # we don't care about the response so just release
+            yield from response.release()
         except Exception as e:
             fail_msg = "Caught exception: {}".format(e)
 
-        if hasattr(obj, fail_msg):
-            self.logger.info("dispatch failed: {} epoch time {} address {} func {}".format(fail_msg, epoch_time, addr, func))
+        if fail_msg != '':
+            self.logger.info(
+"dispatch failed: {} epoch time {} address {} func {}".format(
+                fail_msg, dispatch_time, addr, func))
 
     @asyncio.coroutine
     def worker(self):
