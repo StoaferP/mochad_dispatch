@@ -38,7 +38,6 @@ class MochadClient:
             line = yield from self.reader.readline()
             # an empty string means connection lost, bail out
             if not line:
-                self.logger.warn("Lost connection to mochad")
                 break
             # dispatch RFSEC messages
             if line[15:23] == b'Rx RFSEC':
@@ -55,7 +54,8 @@ class MochadClient:
         func = message[45:]
         fail_msg = ''
 
-        post_data = "dispatch_time={};func={}".format(dispatch_time, func)
+        post_data = "dispatch_time={};func={}".format(
+            urllib.parse.quote(dispatch_time), func)
         headers = {'content-type': 'application/x-www-form-urlencoded'}
         try:
             response = yield from aiohttp.post(
@@ -91,8 +91,9 @@ class MochadClient:
             except OSError as e:
                 if not self.reconnect_time:
                     self.reconnect_time = time.time()
+                    self.logger.warn("Could not connect to mochad. Retrying")
 
-                self.logger.warn("Could not connect to mochad. Retrying")
+                # keep trying to reconnect
                 continue
 
             # if we make it this far we've successfully connected, reset the
@@ -103,6 +104,7 @@ class MochadClient:
             yield from self.read_messages()
 
             # if read_messages() returns it means we got disconnected, retry
+            self.logger.warn("Lost connection to mochad. Retrying.")
             self.reconnect_time = time.time()
 
 def daemon_main():
