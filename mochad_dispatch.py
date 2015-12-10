@@ -108,7 +108,7 @@ class MochadClient:
             self.reconnect_time = time.time()
 
 def daemon_main():
-    mochad_client = MochadClient("127.0.0.1", daemon.logger, args.entry_point)
+    mochad_client = MochadClient(args.server, daemon.logger, args.entry_point)
     loop = asyncio.get_event_loop()
     loop.run_until_complete(mochad_client.worker())
 
@@ -121,9 +121,11 @@ def errordie(message):
 if __name__ == "__main__":
     # parse command line args
     parser = argparse.ArgumentParser()
+    parser.add_argument('-s', '--server', default="127.0.0.1",
+        help="IP/host of server running mochad (default 127.0.0.1)")
     parser.add_argument('-f', '--foreground',
-            action='store_true', default=False,
-            help="Don't fork; run in foreground (for debugging)")
+        action='store_true', default=False,
+        help="Don't fork; run in foreground (for debugging)")
     parser.add_argument('entry_point', help='REST API entry point URL')
     args = parser.parse_args()
 
