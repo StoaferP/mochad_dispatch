@@ -26,6 +26,18 @@ class MochadClient:
         if not self.entry_point[-1] == '/':
             self.entry_point = self.entry_point + '/'
 
+    def parse_mochad_line(self, line):
+        # bail out unless it's an incoming RFSEC message
+        if line[15:23] != 'Rx RFSEC':
+            return '', ''
+
+        # decode message. format is:
+        #   09/22 15:39:07 Rx RFSEC Addr: 21:26:80 Func: Contact_alert_min_DS10A
+        addr = line[30:38]
+        func = line[45:]
+
+        return addr, func
+
 
     @asyncio.coroutine
     def connect(self):
@@ -39,29 +51,26 @@ class MochadClient:
             # an empty string means connection lost, bail out
             if not line:
                 break
-            # dispatch RFSEC messages
-            if line[15:23] == b'Rx RFSEC':
-                asyncio.Task(self.dispatch_message(
-                        line.decode("utf-8").rstrip()))
+            # parse the line
+            addr, func = self.parse_mochad_line(line.decode("utf-8").rstrip())
+            # addr/func will be blank when we dont have an incoming RFSEC msg
+            if addr and func:
+                asyncio.Task(self.dispatch_message(addr, func))
 
     @asyncio.coroutine
-    def dispatch_message(self, message):
-        # decode message
-        #   09/22 15:39:07 Rx RFSEC Addr: 21:26:80 Func: Contact_alert_min_DS10A
-        # do not to use mochad's timestamp because it lacks a year
+    def dispatch_message(self, addr, func):
+        # we don't to use mochad's timestamp because it lacks a year
         dispatch_time = datetime.now(pytz.UTC).isoformat()
-        addr = message[30:38]
-        func = message[45:]
         fail_msg = ''
 
         post_data = "dispatch_time={};func={}".format(
-            urllib.parse.quote(dispatch_time), func)
+              urllib.parse.quote(dispatch_time), func)
         headers = {'content-type': 'application/x-www-form-urlencoded'}
         try:
             response = yield from aiohttp.post(
-                             "{}{}".format(self.entry_point, addr),
-                             data=post_data,
-                             headers=headers)
+                  "{}{}".format(self.entry_point, addr),
+                  data=post_data,
+                  headers=headers)
             if response.status != 200:
                 fail_msg = "HTTP status {}".format(response.status)
             # we don't care about the response so just release
@@ -71,11 +80,12 @@ class MochadClient:
 
         if fail_msg != '':
             self.logger.info(
-"dispatch failed: {} epoch time {} address {} func {}".format(
-                fail_msg, dispatch_time, addr, func))
+                  "dispatch failed: {} epoch time {} address {} func {}".format(
+                  fail_msg, dispatch_time, addr, func))
 
     @asyncio.coroutine
     def worker(self):
+        # CONNECTION LOOP
         while True:
             # if we are in reconnect status, sleep before connecting
             if self.reconnect_time:
@@ -101,9 +111,22 @@ class MochadClient:
             self.reconnect_time = 0
             self.logger.info("Connected to mochad")
 
-            yield from self.read_messages()
+            # READ FROM NETWORK LOOP
+            while True:
+                line = yield from self.reader.readline()
+                # an empty string means connection lost, bail out
+                if not line:
+                    break
+                # parse the line
+                addr, func = self.parse_mochad_line(
+                      line.decode("utf-8").rstrip())
 
-            # if read_messages() returns it means we got disconnected, retry
+                # addr/func will be blank when we have nothing to dispatch
+                if addr and func:
+                    asyncio.Task(self.dispatch_message(addr, func))
+
+
+            # we broke out of the read loop: we got disconnected, retry connect
             self.logger.warn("Lost connection to mochad. Retrying.")
             self.reconnect_time = time.time()
 
@@ -122,10 +145,10 @@ if __name__ == "__main__":
     # parse command line args
     parser = argparse.ArgumentParser()
     parser.add_argument('-s', '--server', default="127.0.0.1",
-        help="IP/host of server running mochad (default 127.0.0.1)")
+          help="IP/host of server running mochad (default 127.0.0.1)")
     parser.add_argument('-f', '--foreground',
-        action='store_true', default=False,
-        help="Don't fork; run in foreground (for debugging)")
+          action='store_true', default=False,
+          help="Don't fork; run in foreground (for debugging)")
     parser.add_argument('entry_point', help='REST API entry point URL')
     args = parser.parse_args()
 
