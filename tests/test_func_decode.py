@@ -1,5 +1,5 @@
 import pytest
-from mochad_dispatch import MochadClient
+from mochad_dispatch.main import MochadClient
 
 MOCHAD_FUNCS = {
       'Motion_alert_MS10A': {

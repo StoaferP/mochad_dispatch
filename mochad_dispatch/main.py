@@ -239,8 +239,7 @@ def errordie(message):
     sys.stderr.write("{}: error: {}\n".format(prog, message))
     sys.exit(1)
 
-
-if __name__ == "__main__":
+def main():
     # parse command line args
     parser = argparse.ArgumentParser()
     parser.add_argument('-s', '--server', default="127.0.0.1",
@@ -267,3 +266,6 @@ if __name__ == "__main__":
                                  foreground=args.foreground,
                                  action=daemon_main)
     daemon.start()
+
+if __name__ == "__main__":
+    main()
