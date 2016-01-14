@@ -52,7 +52,7 @@ class MqttDispatcher:
         # https://groups.google.com/forum/#!topic/homecamp/sWqHvQnLvV0
         topic = "X10/{}:{}/security/{}".format(self.host, self.port, addr)
         payload = json.dumps(message_dict)
-        result, mid = self.mqttc.publish(topic, payload)
+        result, mid = self.mqttc.publish(topic, payload, qos=1, retain=True)
         pass
 
 
@@ -248,10 +248,12 @@ def main():
           action='store_true', default=False,
           help="Don't fork; run in foreground (for debugging)")
     parser.add_argument('dispatch_uri', help='dispatch messages to this URI')
+    global args
     args = parser.parse_args()
 
     # set dispatcher type based on dispatch_uri
     uri = urllib.parse.urlparse(args.dispatch_uri)
+    global dispatcher_type
     if uri.scheme == 'mqtt':
         dispatcher_type = MqttDispatcher
     # assume REST if URI scheme is http or https
@@ -261,6 +263,7 @@ def main():
         errordie("unsupported URI scheme '{}'".format(uri.scheme))
 
     # daemonize
+    global daemon
     daemon = daemonize.Daemonize(app="mochad_dispatch", 
                                  pid="/tmp/mochad_dispatch.pid",
                                  foreground=args.foreground,
