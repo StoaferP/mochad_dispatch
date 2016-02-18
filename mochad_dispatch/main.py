@@ -12,6 +12,13 @@ import paho.mqtt.client as mqtt
 import json
 
 class RestDispatcher:
+    """
+    RestDispatcher object
+
+    Used by MochadClient object to dispatch messages via REST
+
+    :param dispatch_uri: the URI which should be used as a REST entry point
+    """
     def __init__(self, dispatch_uri):
         self.dispatch_uri = dispatch_uri
 
@@ -34,6 +41,13 @@ class RestDispatcher:
 
 
 class MqttDispatcher:
+    """
+    MqttDispatcher object
+
+    Used by MochadClient object to dispatch messages via MQTT
+
+    :param dispatch_uri: the URI that describes the MQTT server which should be used to receive messages
+    """
     def __init__(self, dispatch_uri):
         uri = urllib.parse.urlparse(dispatch_uri)
         self.host = uri.hostname
@@ -57,7 +71,15 @@ class MqttDispatcher:
 
 
 class MochadClient:
-    """ MochadClient object
+    """
+    MochadClient object
+
+    Makes a persistent connection to mochad and translates RFSEC messages to MQTT or REST
+
+    :param host: IP/hostname of system running mochad
+    :param logger: Logger object to use
+    :param dispatcher: object to use for dispatching messages.
+                       Can be either MqttDispatcher or RestDispatcher
     
     """
     def __init__(self, host, logger, dispatcher):
@@ -86,6 +108,9 @@ class MochadClient:
         return addr, {'func': func_dict}
 
     def decode_func(self, raw_func):
+        """
+        Decode the "Func:" parameter of an RFSEC message
+        """
         MOTION_DOOR_WINDOW_SENSORS = ['DS10A', 'DS12A', 'MS10A', 'SP554A']
         SECURITY_REMOTES = ['KR10A', 'KR15A', 'SH624']
         func_list = raw_func.split('_')
@@ -166,6 +191,9 @@ class MochadClient:
 
     @asyncio.coroutine
     def dispatch_message(self, addr, message_dict):
+        """
+        Use dispatcher object to dispatch decoded RFSEC message
+        """
         try:
             yield from self.dispatcher.dispatch_message(addr, message_dict)
         except Exception as e:
@@ -174,6 +202,9 @@ class MochadClient:
 
     @asyncio.coroutine
     def worker(self):
+        """
+        Maintain the connection to mochad, read output from mochad and dispatch any RFSEC messages
+        """
         # CONNECTION LOOP
         while True:
             # if we are in reconnect status, sleep before connecting
@@ -229,17 +260,26 @@ class MochadClient:
             self.reconnect_time = time.time()
 
 def daemon_main():
+    """
+    Main function which will be executed by Daemonize after initializing
+    """
     dispatcher = dispatcher_type(args.dispatch_uri)
     mochad_client = MochadClient(args.server, daemon.logger, dispatcher)
     loop = asyncio.get_event_loop()
     loop.run_until_complete(mochad_client.worker())
 
 def errordie(message):
+    """
+    Print error message then quit with exit code
+    """
     prog = os.path.basename(sys.argv[0])
     sys.stderr.write("{}: error: {}\n".format(prog, message))
     sys.exit(1)
 
 def main():
+    """
+    Main entry point into mochad_dispatch.  Processes command line arguments then hands off to Daemonize and MochadClient
+    """
     # parse command line args
     parser = argparse.ArgumentParser()
     parser.add_argument('-s', '--server', default="127.0.0.1",

@@ -1,5 +1,7 @@
 from setuptools import setup
 
+VERSION = '0.1.5'
+
 REQUIRES = [
     'aiohttp',
     'daemonize',
@@ -9,9 +11,10 @@ REQUIRES = [
 
 setup(
     name='mochad_dispatch',
-    version='0.1.4',
+    version=VERSION,
     description="mochad_dispatch is a daemon written in Python that translates mochad's tcp-based events into REST or MQTT",
     url='https://github.com/ChrisArgyle/mochad_dispatch',
+    download_url='https://github.com/ChrisArgyle/mochad_dispatch/archive/{}.zip'.format(VERSION),
     author='Chris Przybycien',
     author_email='chrisisdiy@gmail.com',
     license='MIT',
@@ -26,7 +29,7 @@ setup(
     },
     classifiers=[
         'License :: OSI Approved :: MIT License',
-        'Operating System :: Linux',
+        'Operating System :: POSIX :: Linux',
         'Programming Language :: Python :: 3.4',
     ],
 )
