@@ -67,7 +67,7 @@ class MqttDispatcher:
         # (based on discussion at below URL)
         # https://groups.google.com/forum/#!topic/homecamp/sWqHvQnLvV0
         topic = "X10/{}/security/{}".format(
-              self.mochad_host, self.port, addr)
+              self.mochad_host, addr)
         payload = json.dumps(message_dict)
         result, mid = self.mqttc.publish(topic, payload, qos=1, retain=True)
         pass
