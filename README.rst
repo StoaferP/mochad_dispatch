@@ -8,14 +8,14 @@ What exactly does it do?
 
 How do I use it?
 ----------------
-Point it at your MQTT broker
+Run mochad_dispatch with a mochad hostname and a MQTT URI
 ::
 
-    $ mochad_dispatch mqtt://localhost:1833
+    $ mochad_dispatch -s hal9000 mqtt://localhost:1833
 
 Then subscribe to the appropriate device topics.  The general format is
 
-    X10/localhost:1883/security/**ADDRESS**
+    X10/**MOCHAD_HOST**/security/**ADDRESS**
 
 Troubleshooting
 ---------------
@@ -27,6 +27,6 @@ For example, using the mosquitto broker:
 ::
 
     $ mosquitto_sub -v -t X10/#
-    X10/localhost:1883/security/C8:21:B2 {"dispatch_time": "2016-02-18T18:36:12.147877+00:00", "func": {"event_type": "contact", "event_state": "normal", "device_type": "DS10A", "delay": "min"}}
-    X10/localhost:1883/security/33:8C:30 {"dispatch_time": "2016-02-18T18:30:42.763780+00:00", "func": {"event_state": "normal", "device_type": "DS10A", "delay": "min", "event_type": "contact"}}
+    X10/hal9000/security/C8:21:B2 {"dispatch_time": "2016-02-18T18:36:12.147877+00:00", "func": {"event_type": "contact", "event_state": "normal", "device_type": "DS10A", "delay": "min"}}
+    X10/hal9000/security/33:8C:30 {"dispatch_time": "2016-02-18T18:30:42.763780+00:00", "func": {"event_state": "normal", "device_type": "DS10A", "delay": "min", "event_type": "contact"}}
 

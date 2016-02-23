@@ -19,8 +19,9 @@ class RestDispatcher:
 
     :param dispatch_uri: the URI which should be used as a REST entry point
     """
-    def __init__(self, dispatch_uri):
+    def __init__(self, mochad_host, dispatch_uri):
         self.dispatch_uri = dispatch_uri
+        self.mochad_host = mochad_host
 
         # ensure entry point ends with /
         if not self.dispatch_uri[-1] == '/':
@@ -48,8 +49,9 @@ class MqttDispatcher:
 
     :param dispatch_uri: the URI that describes the MQTT server which should be used to receive messages
     """
-    def __init__(self, dispatch_uri):
+    def __init__(self, mochad_host, dispatch_uri):
         uri = urllib.parse.urlparse(dispatch_uri)
+        self.mochad_host = mochad_host
         self.host = uri.hostname
         self.port = uri.port if uri.port else 1883
         self.mqttc = mqtt.Client("mochadc{}".format(os.getpid()))
@@ -60,11 +62,12 @@ class MqttDispatcher:
     @asyncio.coroutine
     def dispatch_message(self, addr, message_dict):
         # X10 topic format
-        #    X10/MOCHAD_HOST:PORT/security/DEVICE_ADDRESS
+        #    X10/MOCHAD_HOST/security/DEVICE_ADDRESS
         #
         # (based on discussion at below URL)
         # https://groups.google.com/forum/#!topic/homecamp/sWqHvQnLvV0
-        topic = "X10/{}:{}/security/{}".format(self.host, self.port, addr)
+        topic = "X10/{}/security/{}".format(
+              self.mochad_host, self.port, addr)
         payload = json.dumps(message_dict)
         result, mid = self.mqttc.publish(topic, payload, qos=1, retain=True)
         pass
@@ -263,7 +266,7 @@ def daemon_main():
     """
     Main function which will be executed by Daemonize after initializing
     """
-    dispatcher = dispatcher_type(args.dispatch_uri)
+    dispatcher = dispatcher_type(args.server, args.dispatch_uri)
     mochad_client = MochadClient(args.server, daemon.logger, dispatcher)
     loop = asyncio.get_event_loop()
     loop.run_until_complete(mochad_client.worker())
