@@ -18,14 +18,19 @@ class MqttDispatcher:
     Used by MochadClient object to dispatch messages via MQTT
 
     :param mochad_host: The hostname of the mochad server.  This will be used in the topic name
-    :param dispatch_uri: the URI that describes the MQTT server which should be used to receive messages
+    :param dispatch_uri: The URI that describes an MQTT broker.  Messages dispatched from MochadClient will be published to this broker.
+    :param cafile: The file containing trusted CA certificates.  Specifying this will enable SSL/TLS encryption to the MQTT broker
     """
-    def __init__(self, mochad_host, dispatch_uri):
+    def __init__(self, mochad_host, dispatch_uri, cafile):
         uri = urllib.parse.urlparse(dispatch_uri)
         self.mochad_host = mochad_host
         self.host = uri.hostname
         self.port = uri.port if uri.port else 1883
         self.mqttc = mqtt.Client("mochadc{}".format(os.getpid()))
+
+        # configure TLS if argument "cafile" is given
+        if cafile:
+            self.mqttc.tls_set(cafile)
 
         self.mqttc.connect(self.host, self.port)
         self.mqttc.loop_start()
@@ -237,7 +242,7 @@ def daemon_main():
     """
     Main function which will be executed by Daemonize after initializing
     """
-    dispatcher = dispatcher_type(args.server, args.dispatch_uri)
+    dispatcher = dispatcher_type(args.server, args.dispatch_uri, args.cafile)
     mochad_client = MochadClient(args.server, daemon.logger, dispatcher)
     loop = asyncio.get_event_loop()
     loop.run_until_complete(mochad_client.worker())
@@ -261,6 +266,8 @@ def main():
     parser.add_argument('-f', '--foreground',
           action='store_true', default=False,
           help="Don't fork; run in foreground (for debugging)")
+    parser.add_argument('--cafile',
+          help="File containing trusted CA certificates")
     parser.add_argument('dispatch_uri', help='dispatch messages to this URI')
     global args
     args = parser.parse_args()
