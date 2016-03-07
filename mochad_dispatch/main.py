@@ -1,5 +1,4 @@
 import asyncio
-import aiohttp
 import daemonize
 import sys
 import os
@@ -11,35 +10,6 @@ import urllib.parse
 import paho.mqtt.client as mqtt
 import json
 
-class RestDispatcher:
-    """
-    RestDispatcher object
-
-    Used by MochadClient object to dispatch messages via REST
-
-    :param dispatch_uri: the URI which should be used as a REST entry point
-    """
-    def __init__(self, mochad_host, dispatch_uri):
-        self.dispatch_uri = dispatch_uri
-        self.mochad_host = mochad_host
-
-        # ensure entry point ends with /
-        if not self.dispatch_uri[-1] == '/':
-            self.dispatch_uri = self.dispatch_uri + '/'
-
-    @asyncio.coroutine
-    def dispatch_message(self, addr, message_dict):
-        post_data = json.dumps(message_dict)
-        headers = {'content-type': 'application/json'}
-        response = yield from aiohttp.post(
-              "{}{}".format(self.dispatch_uri, addr),
-              data=post_data,
-              headers=headers)
-        if response.status != 200:
-            raise Exception("HTTP status {}".format(response.status))
-        # we don't care about the response so just release
-        yield from response.release()
-
 
 class MqttDispatcher:
     """
@@ -47,6 +17,7 @@ class MqttDispatcher:
 
     Used by MochadClient object to dispatch messages via MQTT
 
+    :param mochad_host: The hostname of the mochad server.  This will be used in the topic name
     :param dispatch_uri: the URI that describes the MQTT server which should be used to receive messages
     """
     def __init__(self, mochad_host, dispatch_uri):
@@ -77,12 +48,12 @@ class MochadClient:
     """
     MochadClient object
 
-    Makes a persistent connection to mochad and translates RFSEC messages to MQTT or REST
+    Makes a persistent connection to mochad and translates RFSEC messages to MQTT
 
     :param host: IP/hostname of system running mochad
     :param logger: Logger object to use
     :param dispatcher: object to use for dispatching messages.
-                       Can be either MqttDispatcher or RestDispatcher
+                       Must be MqttDispatcher
     
     """
     def __init__(self, host, logger, dispatcher):
@@ -216,7 +187,7 @@ class MochadClient:
 
                 # if we've been reconnecting for over 60s, bail out
                 if (time.time() - self.reconnect_time) > 60:
-                    self.logger.error("Could not reconnect after 60s")
+                    self.logger.error("Could not reconnect to mochad after 60s")
                     break
 
             try:
@@ -299,16 +270,14 @@ def main():
     global dispatcher_type
     if uri.scheme == 'mqtt':
         dispatcher_type = MqttDispatcher
-    # assume REST if URI scheme is http or https
-    elif uri.scheme == 'https' or uri.scheme == 'http':
-        dispatcher_type = RestDispatcher
     else:
         errordie("unsupported URI scheme '{}'".format(uri.scheme))
 
     # daemonize
     global daemon
+    pidfile = "/tmp/mochad_dispatch-{}.pid".format(os.getpid())
     daemon = daemonize.Daemonize(app="mochad_dispatch", 
-                                 pid="/tmp/mochad_dispatch.pid",
+                                 pid=pidfile,
                                  foreground=args.foreground,
                                  action=daemon_main)
     daemon.start()

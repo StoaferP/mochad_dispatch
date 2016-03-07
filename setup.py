@@ -3,7 +3,6 @@ from setuptools import setup
 VERSION = '0.1.7'
 
 REQUIRES = [
-    'aiohttp',
     'daemonize',
     'paho-mqtt',
     'pytz',
