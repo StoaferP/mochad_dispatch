@@ -21,6 +21,7 @@ class MqttDispatcher:
 
     :param mochad_host: The hostname of the mochad server.  This will be used in the topic name
     :param dispatch_uri: The URI that describes an MQTT broker.  Messages dispatched from MochadClient will be published to this broker.
+    :param logger: Logger object to use
     :param cafile: The file containing trusted CA certificates.  Specifying this will enable SSL/TLS encryption to the MQTT broker
     """
     def __init__(self, mochad_host, dispatch_uri, logger, cafile):
@@ -66,6 +67,9 @@ class MqttDispatcher:
 
     @asyncio.coroutine
     def dispatch_message(self, addr, message_dict):
+        """
+        Publish, in json format, a dict to an MQTT broker
+        """
         # X10 topic format
         #    X10/MOCHAD_HOST/security/DEVICE_ADDRESS
         #
@@ -79,6 +83,11 @@ class MqttDispatcher:
 
     @asyncio.coroutine
     def watchdog(self, loop):
+        """
+        Continually watches the MQTT broker connection health.  Exits gracefully if the connection is retried for 60 seconds straight without success.
+
+        Why not just do this in the on_disconnect callback?  The on_disconnect callback is not called while loop_start/loop_forever is doing an automatic reconnect.  This makes it impossible to use on_disconnect to handle reconnect issues in the loop_start/loop_forever functions.
+        """
         while True:
             if (self.reconnect_time > 0 and 
                 time.time() - self.reconnect_time > 60):
@@ -98,8 +107,7 @@ class MochadClient:
 
     :param host: IP/hostname of system running mochad
     :param logger: Logger object to use
-    :param dispatcher: object to use for dispatching messages.
-                       Must be MqttDispatcher
+    :param dispatcher: object to use for dispatching messages.  Must be MqttDispatcher
     
     """
     def __init__(self, host, logger, dispatcher):
@@ -111,6 +119,9 @@ class MochadClient:
         self.dispatcher = dispatcher
 
     def parse_mochad_line(self, line):
+        """
+        Parse a raw line of output from mochad
+        """
         # bail out unless it's an incoming RFSEC message
         if line[15:23] != 'Rx RFSEC':
             return '', ''
@@ -206,6 +217,9 @@ class MochadClient:
 
     @asyncio.coroutine
     def connect(self):
+        """
+        Connect to mochad
+        """
         connection = asyncio.open_connection(self.host, 1099)
         self.reader, self.writer = yield from connection
 
@@ -314,6 +328,9 @@ def daemon_main():
     loop.run_forever()
 
 def sigterm(signum, frame):
+    """
+    Signal handler for SIGTERM messages.  Allows graceful exit on SIGTERM.
+    """
     loop.stop()
 
 def errordie(message):
