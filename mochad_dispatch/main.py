@@ -2,6 +2,7 @@ import asyncio
 import daemonize
 import sys
 import os
+import signal
 import time
 from datetime import datetime
 import pytz
@@ -21,18 +22,45 @@ class MqttDispatcher:
     :param dispatch_uri: The URI that describes an MQTT broker.  Messages dispatched from MochadClient will be published to this broker.
     :param cafile: The file containing trusted CA certificates.  Specifying this will enable SSL/TLS encryption to the MQTT broker
     """
-    def __init__(self, mochad_host, dispatch_uri, cafile):
+    def __init__(self, mochad_host, dispatch_uri, logger, cafile):
         uri = urllib.parse.urlparse(dispatch_uri)
         self.mochad_host = mochad_host
+        self.logger = logger
         self.host = uri.hostname
         self.port = uri.port if uri.port else 1883
         self.mqttc = mqtt.Client("mochadc{}".format(os.getpid()))
+
+        # connection error handling
+        self.reconnect_time = -1
+        def on_connect(client, userdata, flags, rc):
+            self.logger.warn("on_connect")
+            self.reconnect_time = 0
+
+        def on_disconnect(client, userdata, rc):
+            self.logger.warn("on_disconnect rc={}".format(rc))
+            # reconnect_time = -1 means the very first connection failed
+            if self.reconnect_time == -1:
+                # Why suggest SSL here?  If on_disconnect is called BEFORE
+                # on_connect that means the socket initially connected but
+                # failed BEFORE gettin got he MQTT-specific negotiation.  To my
+                # knowledge only SSL happens in between those two
+                self.logger.error(
+"Could not connect to MQTT broker: possibly SSL/TLS failure")
+                os.kill(os.getpid(), signal.SIGTERM)
+            elif self.reconnect_time == 0:
+                self.reconnect_time = time.time()
+
+        self.mqttc.on_connect = on_connect
+        self.mqttc.on_disconnect = on_disconnect
 
         # configure TLS if argument "cafile" is given
         if cafile:
             self.mqttc.tls_set(cafile)
 
-        self.mqttc.connect(self.host, self.port)
+        try:
+            rc = self.mqttc.connect(self.host, self.port)
+        except Exception as e:
+            raise Exception("Could not connect to MQTT broker: {}".format(e))
         self.mqttc.loop_start()
 
     @asyncio.coroutine
@@ -48,6 +76,18 @@ class MqttDispatcher:
         result, mid = self.mqttc.publish(topic, payload, qos=1, retain=True)
         pass
 
+    @asyncio.coroutine
+    def watchdog(self, loop):
+        while True:
+            if (self.reconnect_time > 0 and 
+                time.time() - self.reconnect_time > 60):
+
+                self.logger.error(
+                      "Could not reconnect to MQTT broker after 60s")
+                loop.stop()
+                break
+            else:
+                yield from asyncio.sleep(1)
 
 class MochadClient:
     """
@@ -177,7 +217,8 @@ class MochadClient:
             yield from self.dispatcher.dispatch_message(addr, message_dict)
         except Exception as e:
             self.logger.error(
-                  "dispatch failed: {} message {}".format(e, message_dict))
+                  "Failed to dispatch mochad message {}: {}".format(
+                  message_dict, e))
 
     @asyncio.coroutine
     def worker(self):
@@ -221,7 +262,8 @@ class MochadClient:
                     addr, message_dict = self.parse_mochad_line(
                           line.decode("utf-8").rstrip())
                 except Exception as e:
-                    self.logger.error("parse failed for {}: {}".format(
+                    self.logger.error(
+                          "Failed to parse mochad message {}: {}".format(
                           line, e))
                     continue 
 
@@ -231,7 +273,7 @@ class MochadClient:
                     message_dict['dispatch_time'] = datetime.now(
                           pytz.UTC).isoformat()
 
-                    asyncio.Task(self.dispatch_message(addr, message_dict))
+                    asyncio.async(self.dispatch_message(addr, message_dict))
 
 
             # we broke out of the read loop: we got disconnected, retry connect
@@ -242,10 +284,28 @@ def daemon_main():
     """
     Main function which will be executed by Daemonize after initializing
     """
-    dispatcher = dispatcher_type(args.server, args.dispatch_uri, args.cafile)
+    # handle SIGTERM gracefully
+    signal.signal(signal.SIGTERM, sigterm)
+
+    try:
+        dispatcher = dispatcher_type(args.server,
+                                     args.dispatch_uri,
+                                     daemon.logger,
+                                     args.cafile)
+    except Exception as e:
+        daemon.logger.error("Startup error: {}".format(e))
+        sys.exit(1)
     mochad_client = MochadClient(args.server, daemon.logger, dispatcher)
+    global loop
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(mochad_client.worker())
+    # dispatcher.watchdog() runs continuously to monitor the dispatcher's health
+    # and act on any problems asyncronously
+    asyncio.async(dispatcher.watchdog(loop))
+    asyncio.async(mochad_client.worker())
+    loop.run_forever()
+
+def sigterm(signum, frame):
+    loop.stop()
 
 def errordie(message):
     """
