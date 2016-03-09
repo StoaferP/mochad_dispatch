@@ -39,7 +39,7 @@ class MqttDispatcher:
             self.reconnect_time = 0
 
         def on_disconnect(client, userdata, rc):
-            # reconnect_time = -1 means the very first connection failed
+            # reconnect_time = -1 here means the first connection failed
             if self.reconnect_time == -1:
                 # Why suggest SSL here?  If on_disconnect is called BEFORE
                 # on_connect that means the socket initially connected but
@@ -105,7 +105,7 @@ class MochadClient:
     def __init__(self, host, logger, dispatcher):
         self.host = host
         self.logger = logger
-        self.reconnect_time = 0
+        self.reconnect_time = -1
         self.reader = None
         self.writer = None
         self.dispatcher = dispatcher
@@ -222,27 +222,35 @@ class MochadClient:
                   message_dict, e))
 
     @asyncio.coroutine
-    def worker(self):
+    def worker(self, loop):
         """
         Maintain the connection to mochad, read output from mochad and dispatch any RFSEC messages
         """
         # CONNECTION LOOP
         while True:
             # if we are in reconnect status, sleep before connecting
-            if self.reconnect_time:
+            if self.reconnect_time > 0:
                 yield from asyncio.sleep(1)
 
                 # if we've been reconnecting for over 60s, bail out
                 if (time.time() - self.reconnect_time) > 60:
                     self.logger.error("Could not reconnect to mochad after 60s")
+                    loop.stop()
                     break
 
             try:
                 yield from self.connect()
             except OSError as e:
-                if not self.reconnect_time:
+                if self.reconnect_time == 0:
                     self.reconnect_time = time.time()
-                    self.logger.warn("Could not connect to mochad. Retrying")
+                    self.logger.warn(
+                          "Could not connect to mochad. Retrying: {}".format(e))
+                # reconnect_time = -1 here means the first connection failed
+                elif self.reconnect_time == -1:
+                    self.logger.error(
+                          "Could not connect to mochad: {}".format(e))
+                    loop.stop()
+                    break
 
                 # keep trying to reconnect
                 continue
@@ -256,7 +264,7 @@ class MochadClient:
             while True:
                 line = yield from self.reader.readline()
                 # an empty string means connection lost, exit read loop
-                if not line:
+                if not line and self.reader.at_eof():
                     break
                 # parse the line
                 try:
@@ -302,7 +310,7 @@ def daemon_main():
     # dispatcher.watchdog() runs continuously to monitor the dispatcher's health
     # and act on any problems asyncronously
     asyncio.async(dispatcher.watchdog(loop))
-    asyncio.async(mochad_client.worker())
+    asyncio.async(mochad_client.worker(loop))
     loop.run_forever()
 
 def sigterm(signum, frame):
