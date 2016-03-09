@@ -3,6 +3,7 @@ import daemonize
 import sys
 import os
 import signal
+import socket
 import time
 from datetime import datetime
 import pytz
@@ -28,16 +29,16 @@ class MqttDispatcher:
         self.logger = logger
         self.host = uri.hostname
         self.port = uri.port if uri.port else 1883
-        self.mqttc = mqtt.Client("mochadc{}".format(os.getpid()))
+        mqtt_client_id = "mochadc/{}-{}".format(os.getpid(),
+                                                socket.gethostname())
+        self.mqttc = mqtt.Client(mqtt_client_id)
 
         # connection error handling
         self.reconnect_time = -1
         def on_connect(client, userdata, flags, rc):
-            self.logger.warn("on_connect")
             self.reconnect_time = 0
 
         def on_disconnect(client, userdata, rc):
-            self.logger.warn("on_disconnect rc={}".format(rc))
             # reconnect_time = -1 means the very first connection failed
             if self.reconnect_time == -1:
                 # Why suggest SSL here?  If on_disconnect is called BEFORE
