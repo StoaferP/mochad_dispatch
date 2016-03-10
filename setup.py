@@ -1,6 +1,6 @@
 from setuptools import setup
 
-VERSION = '0.1.7'
+VERSION = '0.1.8'
 
 REQUIRES = [
     'daemonize',
@@ -11,7 +11,7 @@ REQUIRES = [
 setup(
     name='mochad_dispatch',
     version=VERSION,
-    description="mochad_dispatch is a daemon written in Python that translates mochad's tcp-based events into REST or MQTT",
+    description="mochad_dispatch is a daemon written in Python that translates mochad's tcp-based events into MQTT",
     url='https://github.com/ChrisArgyle/mochad_dispatch',
     download_url='https://github.com/ChrisArgyle/mochad_dispatch/archive/{}.zip'.format(VERSION),
     author='Chris Przybycien',
