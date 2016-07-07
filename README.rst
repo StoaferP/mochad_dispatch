@@ -43,5 +43,13 @@ For example, using the mosquitto broker:
     X10/hal9000/security/C8:21:B2 {"dispatch_time": "2016-02-18T18:36:12.147877+00:00", "func": {"event_type": "contact", "event_state": "normal", "device_type": "DS10A", "delay": "min"}}
     X10/hal9000/security/33:8C:30 {"dispatch_time": "2016-02-18T18:30:42.763780+00:00", "func": {"event_state": "normal", "device_type": "DS10A", "delay": "min", "event_type": "contact"}}
 
+Dockerized App
+==============
+Build the docker image (using the Dockerfile based on the jfloff/alpine-python image) and run the mochad_dispatch command:
+::
+
+    $ docker build -t mochad_dispatch .
+    $ docker run -it mochad_dispatch mochad_dispatch -s hal9000 mqtt://mqtt.example.com:1833
+
 
 
