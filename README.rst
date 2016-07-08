@@ -45,11 +45,17 @@ For example, using the mosquitto broker:
 
 Dockerized App
 ==============
-Build the docker image (using the Dockerfile based on the jfloff/alpine-python image) and run the mochad_dispatch command:
+Build the docker image (using the Dockerfile based on the jfloff/alpine-python image) and run the mochad_dispatch command.  IMPORTANT: you must use the "-f" flag (to disable background/daemon mode) else the docker container will exit immediately.
 ::
 
     $ docker build -t mochad_dispatch .
-    $ docker run -it mochad_dispatch mochad_dispatch -s hal9000 mqtt://mqtt.example.com:1833
+    $ docker run -d -it mochad_dispatch mochad_dispatch -s hal9000 mqtt://mqtt.example.com:1883 -f
 
+Dockerized App Full Stack Example
+=================================
+Run (and background) individual Docker containers to provide an MQTT broker, a MOCHAD daemon, and a MOCHAD_DISPATCH instance (assuming you've already built an image as described above):
+::
 
-
+	$ docker run -d --name=mosquitto -p 1883:1883 -p 9001:9001 sourceperl/mosquitto
+	$ docker run -d --name=mochad -p 1099:1099 --device "/dev/bus/usb/005" jshridha/mochad:latest
+	$ docker run -d -it mochad_dispatch mochad_dispatch -s localhost mqtt://localhost:1883 -f
