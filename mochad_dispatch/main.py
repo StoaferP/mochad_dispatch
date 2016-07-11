@@ -1,6 +1,5 @@
 import asyncio
 import daemonize
-import logging
 import sys
 import os
 import signal
@@ -283,9 +282,8 @@ class MochadClient:
                     break
                 # parse the line
                 try:
-                    line_decoded = line.decode("utf-8").rstrip()
-                    logging.debug("MOCHAD: " + line_decoded)
-                    addr, message_dict = self.parse_mochad_line(line_decoded)
+                    addr, message_dict = self.parse_mochad_line(
+                          line.decode("utf-8").rstrip())
                 except Exception as e:
                     self.logger.error(
                           "Failed to parse mochad message {}: {}".format(
@@ -375,8 +373,6 @@ def main():
                                  pid=pidfile,
                                  foreground=args.foreground,
                                  action=daemon_main)
-    logging.basicConfig(level=logging.DEBUG)
-    logging.info("Starting daemon...")
     daemon.start()
 
 if __name__ == "__main__":

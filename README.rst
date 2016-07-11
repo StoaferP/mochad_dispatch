@@ -58,4 +58,4 @@ Run (and background) individual Docker containers to provide an MQTT broker, a M
 
 	$ docker run -d --name=mosquitto -p 1883:1883 -p 9001:9001 sourceperl/mosquitto
 	$ docker run -d --name=mochad -p 1099:1099 --device "/dev/bus/usb/005" jshridha/mochad:latest
-	$ docker run -d -it mochad_dispatch mochad_dispatch -s localhost mqtt://localhost:1883 -f
+	$ docker run --link mosquitto --link mochad:hal9000 -d -it mochad_dispatch mochad_dispatch -s hal9000 mqtt://mosquitto:1883 -f
