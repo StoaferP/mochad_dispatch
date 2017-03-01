@@ -15,7 +15,7 @@ How do I use it?
 Run mochad_dispatch with a mochad hostname and a MQTT URI
 ::
 
-    $ mochad_dispatch -s hal9000 mqtt://mqtt.example.com:1833
+    $ mochad_dispatch -s hal9000 mqtt://mqtt.example.com:1883
 
 Then subscribe to the appropriate device topics.  The general format is
 
