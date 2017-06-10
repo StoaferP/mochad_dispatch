@@ -122,7 +122,6 @@ class MochadClient:
         """
         Parse a raw line of output from mochad
         """
-        self.logger.info(line[15:19])
         # bail out unless it's an incoming RFSEC message
         if line[15:23] == 'Rx RFSEC':
 
