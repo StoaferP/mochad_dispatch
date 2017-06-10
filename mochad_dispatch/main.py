@@ -122,21 +122,34 @@ class MochadClient:
         """
         Parse a raw line of output from mochad
         """
+        self.logger.info(line[15:19])
         # bail out unless it's an incoming RFSEC message
-        if line[15:23] != 'Rx RFSEC':
-            return '', ''
+        if line[15:23] == 'Rx RFSEC':
 
-        # decode message. format is either:
-        #   09/22 15:39:07 Rx RFSEC Addr: 21:26:80 Func: Contact_alert_min_DS10A
-        #     ~ or ~
-        #   09/22 15:39:07 Rx RFSEC Addr: 0x80 Func: Motion_alert_SP554A
-        line_list = line.split(' ')
-        addr = line_list[5]
-        func = line_list[7]
+            # decode message. format is either:
+            #   09/22 15:39:07 Rx RFSEC Addr: 21:26:80 Func: Contact_alert_min_DS10A
+            #     ~ or ~
+            #   09/22 15:39:07 Rx RFSEC Addr: 0x80 Func: Motion_alert_SP554A
+            line_list = line.split(' ')
+            addr = line_list[5]
+            func = line_list[7]
 
-        func_dict = self.decode_func(func)
+            func_dict = self.decode_func(func)
 
-        return addr, {'func': func_dict}
+            return addr, {'func': func_dict}
+
+        elif line[15:20] == 'Rx RF':
+
+            # decode RF message. format is:
+            #   02/13 23:54:28 Rx RF HouseUnit: B1 Func: On
+            line_list = line.split(' ')
+            house_code = line_list[5];
+            house_func = line_list[7]
+
+            return house_code, {'func': house_func}
+
+        return '', ''
+
 
     def decode_func(self, raw_func):
         """
