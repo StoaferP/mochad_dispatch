@@ -6,7 +6,7 @@ mochad_dispatch
 
 What exactly does it do?
 ========================
-**mochad_dispatch** connects to `mochad <https://sourceforge.net/projects/mochad/>`_ (which reads messages from a USB receiver like the X10 CM15a) and listens for X10 security messages then publishes those to an MQTT broker.
+**mochad_dispatch** connects to `mochad <https://sourceforge.net/projects/mochad/>`_ (which reads messages from a USB receiver like the X10 CM15a) and listens for X10 security and button-press messages then publishes those to an MQTT broker.
 
 It will automatically reconnect to both mochad and the MQTT broker.  However, if a reconnect attempt fails for 60 seconds straight, **mochad_dispatch** will give up and exit.
 
@@ -19,7 +19,9 @@ Run mochad_dispatch with a mochad hostname and a MQTT URI
 
 Then subscribe to the appropriate device topics.  The general format is
 
-    X10/**MOCHAD_HOST**/security/**ADDRESS**
+    X10/**MOCHAD_HOST**/**KIND**/**ADDRESS**
+
+where **KIND** is **security** for RFSEC alerts and **button** for button presses from an X10 remote.  Note that **button** events are sent at QoS 0 and without the retain flag so they will not persist.
 
 What about MQTT with TLS?
 -------------------------
