@@ -66,7 +66,7 @@ class MqttDispatcher:
         self.mqttc.loop_start()
 
     @asyncio.coroutine
-    def dispatch_message(self, addr, message_dict):
+    def dispatch_message(self, addr, message_dict, kind):
         """
         Publish, in json format, a dict to an MQTT broker
         """
@@ -75,10 +75,17 @@ class MqttDispatcher:
         #
         # (based on discussion at below URL)
         # https://groups.google.com/forum/#!topic/homecamp/sWqHvQnLvV0
-        topic = "X10/{}/security/{}".format(
-              self.mochad_host, addr)
+        topic = "X10/{}/{}/{}".format(
+              self.mochad_host, kind, addr)
         payload = json.dumps(message_dict)
-        result, mid = self.mqttc.publish(topic, payload, qos=1, retain=True)
+        # Distinguish between status messages (security) and
+        # button presses per Andy Stanford-Clark's suggestion at
+        # https://groups.google.com/d/msg/mqtt/rIp1uJsT9Nk/7YOWNCQO3ZEJ
+        if kind == 'button':
+            qos, retain = 0, False
+        else:
+            qos, retain = 1, True
+        result, mid = self.mqttc.publish(topic, payload, qos=qos, retain=retain)
         pass
 
     @asyncio.coroutine
@@ -135,7 +142,7 @@ class MochadClient:
 
             func_dict = self.decode_func(func)
 
-            return addr, {'func': func_dict}
+            return addr, {'func': func_dict}, 'security'
 
         elif line[15:20] == 'Rx RF':
 
@@ -145,7 +152,7 @@ class MochadClient:
             house_code = line_list[5];
             house_func = line_list[7]
 
-            return house_code, {'func': house_func}
+            return house_code, {'func': house_func}, 'button'
 
         return '', ''
 
@@ -236,12 +243,12 @@ class MochadClient:
         self.reader, self.writer = yield from connection
 
     @asyncio.coroutine
-    def dispatch_message(self, addr, message_dict):
+    def dispatch_message(self, addr, message_dict, kind):
         """
         Use dispatcher object to dispatch decoded RFSEC message
         """
         try:
-            yield from self.dispatcher.dispatch_message(addr, message_dict)
+            yield from self.dispatcher.dispatch_message(addr, message_dict, kind)
         except Exception as e:
             self.logger.error(
                   "Failed to dispatch mochad message {}: {}".format(
@@ -294,7 +301,7 @@ class MochadClient:
                     break
                 # parse the line
                 try:
-                    addr, message_dict = self.parse_mochad_line(
+                    addr, message_dict, kind = self.parse_mochad_line(
                           line.decode("utf-8").rstrip())
                 except Exception as e:
                     self.logger.error(
@@ -308,7 +315,7 @@ class MochadClient:
                     message_dict['dispatch_time'] = datetime.now(
                           pytz.UTC).isoformat()
 
-                    asyncio.async(self.dispatch_message(addr, message_dict))
+                    asyncio.async(self.dispatch_message(addr, message_dict, kind))
 
 
             # we broke out of the read loop: we got disconnected, retry connect
