@@ -315,7 +315,7 @@ class MochadClient:
                     message_dict['dispatch_time'] = datetime.now(
                           pytz.UTC).isoformat()
 
-                    asyncio.async(self.dispatch_message(addr, message_dict, kind))
+                    asyncio.ensure_future(self.dispatch_message(addr, message_dict, kind))
 
 
             # we broke out of the read loop: we got disconnected, retry connect
@@ -342,8 +342,8 @@ def daemon_main():
     loop = asyncio.get_event_loop()
     # dispatcher.watchdog() runs continuously to monitor the dispatcher's health
     # and act on any problems asyncronously
-    asyncio.async(dispatcher.watchdog(loop))
-    asyncio.async(mochad_client.worker(loop))
+    asyncio.ensure_future(dispatcher.watchdog(loop))
+    asyncio.ensure_future(mochad_client.worker(loop))
     loop.run_forever()
 
 def sigterm(signum, frame):
