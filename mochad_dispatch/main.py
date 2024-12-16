@@ -94,7 +94,7 @@ class MqttDispatcher:
         Why not just do this in the on_disconnect callback?  The on_disconnect callback is not called while loop_start/loop_forever is doing an automatic reconnect.  This makes it impossible to use on_disconnect to handle reconnect issues in the loop_start/loop_forever functions.
         """
         while True:
-            if (self.reconnect_time > 0 and 
+            if (self.reconnect_time > 0 and
                 time.time() - self.reconnect_time > 60):
 
                 self.logger.error(
@@ -113,7 +113,7 @@ class MochadClient:
     :param host: IP/hostname of system running mochad
     :param logger: Logger object to use
     :param dispatcher: object to use for dispatching messages.  Must be MqttDispatcher
-    
+
     """
     def __init__(self, host, logger, dispatcher):
         self.host = host
@@ -127,6 +127,8 @@ class MochadClient:
         """
         Parse a raw line of output from mochad
         """
+        if type(line) == bytes:
+            line = line.decode()
         # bail out unless it's an incoming RFSEC message
         if line[15:23] == 'Rx RFSEC':
 
@@ -142,13 +144,14 @@ class MochadClient:
 
             return addr, {'func': func_dict}, 'security'
 
-        elif line[15:20] == 'Rx RF':
+        elif line[16:20] == 'x RF':
 
             # decode RF message. format is:
             #   02/13 23:54:28 Rx RF HouseUnit: B1 Func: On
+            #   12/15 21:30:45 Tx RF HouseUnit: A4 Func: On\n
             line_list = line.split(' ')
-            house_code = line_list[5];
-            house_func = line_list[7]
+            house_code = line_list[5]
+            house_func = line_list[7].strip()
 
             return house_code, {'func': house_func}, 'button'
 
@@ -302,7 +305,7 @@ class MochadClient:
                     self.logger.error(
                           "Failed to parse mochad message {}: {}".format(
                           line, e))
-                    continue 
+                    continue
 
                 # addr/func will be blank when we have nothing to dispatch
                 if addr and message_dict:
@@ -383,7 +386,7 @@ def main():
     # daemonize
     global daemon
     pidfile = "/tmp/mochad_dispatch-{}.pid".format(os.getpid())
-    daemon = daemonize.Daemonize(app="mochad_dispatch", 
+    daemon = daemonize.Daemonize(app="mochad_dispatch",
                                  pid=pidfile,
                                  foreground=args.foreground,
                                  action=daemon_main)
