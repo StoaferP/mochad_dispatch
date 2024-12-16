@@ -65,8 +65,7 @@ class MqttDispatcher:
             raise Exception("Could not connect to MQTT broker: {}".format(e))
         self.mqttc.loop_start()
 
-    @asyncio.coroutine
-    def dispatch_message(self, addr, message_dict, kind):
+    async def dispatch_message(self, addr, message_dict, kind):
         """
         Publish, in json format, a dict to an MQTT broker
         """
@@ -88,8 +87,7 @@ class MqttDispatcher:
         result, mid = self.mqttc.publish(topic, payload, qos=qos, retain=retain)
         pass
 
-    @asyncio.coroutine
-    def watchdog(self, loop):
+    async def watchdog(self, loop):
         """
         Continually watches the MQTT broker connection health.  Exits gracefully if the connection is retried for 60 seconds straight without success.
 
@@ -104,7 +102,7 @@ class MqttDispatcher:
                 loop.stop()
                 break
             else:
-                yield from asyncio.sleep(1)
+                await asyncio.sleep(1)
 
 class MochadClient:
     """
@@ -234,28 +232,25 @@ class MochadClient:
 
         return func_dict
 
-    @asyncio.coroutine
-    def connect(self):
+    async def connect(self):
         """
         Connect to mochad
         """
         connection = asyncio.open_connection(self.host, 1099)
-        self.reader, self.writer = yield from connection
+        self.reader, self.writer = await connection
 
-    @asyncio.coroutine
-    def dispatch_message(self, addr, message_dict, kind):
+    async def dispatch_message(self, addr, message_dict, kind):
         """
         Use dispatcher object to dispatch decoded RFSEC message
         """
         try:
-            yield from self.dispatcher.dispatch_message(addr, message_dict, kind)
+            await self.dispatcher.dispatch_message(addr, message_dict, kind)
         except Exception as e:
             self.logger.error(
                   "Failed to dispatch mochad message {}: {}".format(
                   message_dict, e))
 
-    @asyncio.coroutine
-    def worker(self, loop):
+    async def worker(self, loop):
         """
         Maintain the connection to mochad, read output from mochad and dispatch any RFSEC messages
         """
@@ -263,7 +258,7 @@ class MochadClient:
         while True:
             # if we are in reconnect status, sleep before connecting
             if self.reconnect_time > 0:
-                yield from asyncio.sleep(1)
+                await asyncio.sleep(1)
 
                 # if we've been reconnecting for over 60s, bail out
                 if (time.time() - self.reconnect_time) > 60:
@@ -272,7 +267,7 @@ class MochadClient:
                     break
 
             try:
-                yield from self.connect()
+                await self.connect()
             except OSError as e:
                 if self.reconnect_time == 0:
                     self.reconnect_time = time.time()
@@ -295,7 +290,7 @@ class MochadClient:
 
             # READ FROM NETWORK LOOP
             while True:
-                line = yield from self.reader.readline()
+                line = await self.reader.readline()
                 # an empty string means connection lost, exit read loop
                 if not line and self.reader.at_eof():
                     break
