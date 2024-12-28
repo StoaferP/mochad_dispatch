@@ -30,6 +30,13 @@ For TLS support use the '--cafile' option like so
 
     $ mochad_dispatch -s hal9000 --cafile /etc/pki/tls/cert.pem mqtt://mqtt.example.com:8883
 
+What about MQTT username and password?
+--------------------------------------
+For username and password use the ',user=theusername,pass=thepassword' appended to the URI like so
+::
+
+    $ mochad_dispatch -s hal9000 mqtt://mqtt.example.com:1883,user=theusername,pass=thepassword
+
 What about house code filtering?
 --------------------------------
 You can also add filtering by house code as well using the -c/--housecodes optino and list your codes that you want to use. The default is all A thru P. To use just add -c AD or any other combination of house codes.

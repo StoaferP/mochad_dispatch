@@ -88,7 +88,17 @@ class MqttDispatcher:
     :param cafile: The file containing trusted CA certificates.  Specifying this will enable SSL/TLS encryption to the MQTT broker
     """
     def __init__(self, mochad_host, dispatch_uri, logger, cafile, killer):
-        uri = urllib.parse.urlparse(dispatch_uri)
+        use_password = False
+        if ',' in dispatch_uri:
+            real_uri = dispatch_uri.split(',')[0]
+            if 'user' in dispatch_uri and 'pass' in dispatch_uri:
+                user = dispatch_uri.split(',')[1].split('=')[1]
+                password = dispatch_uri.split(',')[2].split('=')[1]
+                logger.debug(f"real_uri: {real_uri}, user: {user}, password: {password}")
+                use_password = True
+        else:
+            real_uri = dispatch_uri
+        uri = urllib.parse.urlparse(real_uri)
         self.mochad_host = mochad_host
         self.logger = logger
         self.killer = killer
@@ -98,14 +108,17 @@ class MqttDispatcher:
                                                 socket.gethostname())
         self.logger.info(f"mqtt_client_id: {mqtt_client_id}, mqtt host: {self.host}, mqtt port: {self.port}")
         self.mqttc = mqtt.Client(CallbackAPIVersion.VERSION2, mqtt_client_id)
+        if use_password:
+            self.logger.info(f"mqtt connection with username and password.")
+            self.mqttc.username_pw_set(user, password)
 
-        self.logger.info("self.mqttc: {}".format(self.mqttc))
+        self.logger.debug("self.mqttc: {}".format(self.mqttc))
         # connection error handling
         self.reconnect_time = -1
         def on_connect(client, userdata, flags, rc, properties):
             self.reconnect_time = 0
 
-        def on_disconnect(client, userdata, rc):
+        def on_disconnect(client, userdata, flags, rc, properties):
             # reconnect_time = -1 here means the first connection failed
             if self.reconnect_time == -1:
                 # Why suggest SSL here?  If on_disconnect is called BEFORE
@@ -126,6 +139,7 @@ class MqttDispatcher:
 
         try:
             rc = self.mqttc.connect(self.host, self.port)
+            self.logger.info(f"mqtt connect return code: {rc}")
         except Exception as e:
             raise Exception("Could not connect to MQTT broker: {}".format(e))
         self.mqttc.loop_start()
@@ -376,7 +390,7 @@ class MochadClient:
             # if we make it this far we've successfully connected, reset the
             # reconnect time
             self.reconnect_time = 0
-            self.logger.info("Connected to mochad")
+            self.logger.info(f"Connected to mochad host: {self.host}")
 
             # READ FROM NETWORK LOOP
             while True:
@@ -413,10 +427,10 @@ def daemon_main():
     """
     global main_logger, killer, args
 
-    main_logger.debug("daemon_main()")
+    main_logger.info("daemon_main()")
 
     try:
-        main_logger.info(f"dispatcher_type({args.server}, {args.dispatch_uri}, logger, {args.cafile}), killer")
+        main_logger.debug(f"dispatcher_type({args.server}, {args.dispatch_uri}, logger, {args.cafile}), killer")
         dispatcher = dispatcher_type(args.server,
                                      args.dispatch_uri,
                                      main_logger,
@@ -503,7 +517,7 @@ def main():
     main_logger.addHandler(main_file_handler)
 
     main_logger.info("Starting mochad_dispatch")
-    main_logger.info("args: {}".format(args))
+    main_logger.debug("args: {}".format(args))
 
     # set dispatcher type based on dispatch_uri
     uri = urllib.parse.urlparse(args.dispatch_uri)
