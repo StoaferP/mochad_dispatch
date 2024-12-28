@@ -65,8 +65,7 @@ class MqttDispatcher:
             raise Exception("Could not connect to MQTT broker: {}".format(e))
         self.mqttc.loop_start()
 
-    @asyncio.coroutine
-    def dispatch_message(self, addr, message_dict, kind):
+    async def dispatch_message(self, addr, message_dict, kind):
         """
         Publish, in json format, a dict to an MQTT broker
         """
@@ -88,15 +87,14 @@ class MqttDispatcher:
         result, mid = self.mqttc.publish(topic, payload, qos=qos, retain=retain)
         pass
 
-    @asyncio.coroutine
-    def watchdog(self, loop):
+    async def watchdog(self, loop):
         """
         Continually watches the MQTT broker connection health.  Exits gracefully if the connection is retried for 60 seconds straight without success.
 
         Why not just do this in the on_disconnect callback?  The on_disconnect callback is not called while loop_start/loop_forever is doing an automatic reconnect.  This makes it impossible to use on_disconnect to handle reconnect issues in the loop_start/loop_forever functions.
         """
         while True:
-            if (self.reconnect_time > 0 and 
+            if (self.reconnect_time > 0 and
                 time.time() - self.reconnect_time > 60):
 
                 self.logger.error(
@@ -104,7 +102,7 @@ class MqttDispatcher:
                 loop.stop()
                 break
             else:
-                yield from asyncio.sleep(1)
+                await asyncio.sleep(1)
 
 class MochadClient:
     """
@@ -115,7 +113,7 @@ class MochadClient:
     :param host: IP/hostname of system running mochad
     :param logger: Logger object to use
     :param dispatcher: object to use for dispatching messages.  Must be MqttDispatcher
-    
+
     """
     def __init__(self, host, logger, dispatcher):
         self.host = host
@@ -129,6 +127,8 @@ class MochadClient:
         """
         Parse a raw line of output from mochad
         """
+        if type(line) == bytes:
+            line = line.decode()
         # bail out unless it's an incoming RFSEC message
         if line[15:23] == 'Rx RFSEC':
 
@@ -144,13 +144,14 @@ class MochadClient:
 
             return addr, {'func': func_dict}, 'security'
 
-        elif line[15:20] == 'Rx RF':
+        elif line[16:20] == 'x RF':
 
             # decode RF message. format is:
             #   02/13 23:54:28 Rx RF HouseUnit: B1 Func: On
+            #   12/15 21:30:45 Tx RF HouseUnit: A4 Func: On\n
             line_list = line.split(' ')
-            house_code = line_list[5];
-            house_func = line_list[7]
+            house_code = line_list[5]
+            house_func = line_list[7].strip()
 
             return house_code, {'func': house_func}, 'button'
 
@@ -234,28 +235,25 @@ class MochadClient:
 
         return func_dict
 
-    @asyncio.coroutine
-    def connect(self):
+    async def connect(self):
         """
         Connect to mochad
         """
         connection = asyncio.open_connection(self.host, 1099)
-        self.reader, self.writer = yield from connection
+        self.reader, self.writer = await connection
 
-    @asyncio.coroutine
-    def dispatch_message(self, addr, message_dict, kind):
+    async def dispatch_message(self, addr, message_dict, kind):
         """
         Use dispatcher object to dispatch decoded RFSEC message
         """
         try:
-            yield from self.dispatcher.dispatch_message(addr, message_dict, kind)
+            await self.dispatcher.dispatch_message(addr, message_dict, kind)
         except Exception as e:
             self.logger.error(
                   "Failed to dispatch mochad message {}: {}".format(
                   message_dict, e))
 
-    @asyncio.coroutine
-    def worker(self, loop):
+    async def worker(self, loop):
         """
         Maintain the connection to mochad, read output from mochad and dispatch any RFSEC messages
         """
@@ -263,7 +261,7 @@ class MochadClient:
         while True:
             # if we are in reconnect status, sleep before connecting
             if self.reconnect_time > 0:
-                yield from asyncio.sleep(1)
+                await asyncio.sleep(1)
 
                 # if we've been reconnecting for over 60s, bail out
                 if (time.time() - self.reconnect_time) > 60:
@@ -272,7 +270,7 @@ class MochadClient:
                     break
 
             try:
-                yield from self.connect()
+                await self.connect()
             except OSError as e:
                 if self.reconnect_time == 0:
                     self.reconnect_time = time.time()
@@ -295,7 +293,7 @@ class MochadClient:
 
             # READ FROM NETWORK LOOP
             while True:
-                line = yield from self.reader.readline()
+                line = await self.reader.readline()
                 # an empty string means connection lost, exit read loop
                 if not line and self.reader.at_eof():
                     break
@@ -307,7 +305,7 @@ class MochadClient:
                     self.logger.error(
                           "Failed to parse mochad message {}: {}".format(
                           line, e))
-                    continue 
+                    continue
 
                 # addr/func will be blank when we have nothing to dispatch
                 if addr and message_dict:
@@ -315,7 +313,7 @@ class MochadClient:
                     message_dict['dispatch_time'] = datetime.now(
                           pytz.UTC).isoformat()
 
-                    asyncio.async(self.dispatch_message(addr, message_dict, kind))
+                    asyncio.ensure_future(self.dispatch_message(addr, message_dict, kind))
 
 
             # we broke out of the read loop: we got disconnected, retry connect
@@ -342,8 +340,8 @@ def daemon_main():
     loop = asyncio.get_event_loop()
     # dispatcher.watchdog() runs continuously to monitor the dispatcher's health
     # and act on any problems asyncronously
-    asyncio.async(dispatcher.watchdog(loop))
-    asyncio.async(mochad_client.worker(loop))
+    asyncio.ensure_future(dispatcher.watchdog(loop))
+    asyncio.ensure_future(mochad_client.worker(loop))
     loop.run_forever()
 
 def sigterm(signum, frame):
@@ -388,7 +386,7 @@ def main():
     # daemonize
     global daemon
     pidfile = "/tmp/mochad_dispatch-{}.pid".format(os.getpid())
-    daemon = daemonize.Daemonize(app="mochad_dispatch", 
+    daemon = daemonize.Daemonize(app="mochad_dispatch",
                                  pid=pidfile,
                                  foreground=args.foreground,
                                  action=daemon_main)
