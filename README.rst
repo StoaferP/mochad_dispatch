@@ -6,7 +6,7 @@ mochad_dispatch
 
 What exactly does it do?
 ========================
-**mochad_dispatch** connects to `mochad <https://sourceforge.net/projects/mochad/>`_ (which reads messages from a USB receiver like the X10 CM15a) and listens for X10 security and button-press messages then publishes those to an MQTT broker.
+**mochad_dispatch** connects to `mochad <https://sourceforge.net/projects/mochad/>`_ (which reads messages from a USB receiver like the X10 CM15a) and listens for X10 security and button-press messages which now includes power line receipt of control messages (Rx PL) then publishes those to an MQTT broker.
 
 It will automatically reconnect to both mochad and the MQTT broker.  However, if a reconnect attempt fails for 60 seconds straight, **mochad_dispatch** will give up and exit.
 
@@ -30,9 +30,16 @@ For TLS support use the '--cafile' option like so
 
     $ mochad_dispatch -s hal9000 --cafile /etc/pki/tls/cert.pem mqtt://mqtt.example.com:8883
 
+What about house code filtering?
+--------------------------------
+You can also add filtering by house code as well using the -c/--housecodes optino and list your codes that you want to use. The default is all A thru P. To use just add -c AD or any other combination of house codes.
+::
+    
+    $ mochad_dispatch -s hal9000 -c AD mqtt://mqtt.example.com:1883
+    
 Troubleshooting
 ===============
-mochad_dispatch has been tested with mochad 0.1.16 and Mosquitto 1.4.3
+mochad_dispatch has been tested with mochad 0.1.17 and Mosquitto 1.4.3
 
 Start by making sure your MQTT broker is relaying X10 messages by subscribing to the topic
 

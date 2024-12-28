@@ -1,5 +1,3 @@
-import asyncio
-import daemonize
 import sys
 import os
 import signal
@@ -11,7 +9,72 @@ import argparse
 import urllib.parse
 import paho.mqtt.client as mqtt
 import json
+from paho.mqtt.enums import CallbackAPIVersion
 
+import threading
+
+import logging
+from logging.handlers import RotatingFileHandler
+
+base_path = None
+args = None
+dispatcher_type = None
+main_logger = None
+loop = None
+killer = None
+
+class GracefulKiller:
+    kill_now = False
+
+    def __init__(self):
+        self.kill_now = False
+        signal.signal(signal.SIGINT, self.exit_gracefully)
+        signal.signal(signal.SIGTERM, self.exit_gracefully)
+
+    def exit_gracefully(self, *args):
+        self.kill_now = True
+        main_logger.info("Caught signal, mochad_dispatch is exiting...")
+        #exit(0)
+    
+    def do_kill_now(self):
+        os.kill(os.getpid(), signal.SIGTERM)
+
+class SocketReader:
+    def __init__(self, host, port):
+        self.host = host
+        self.port = port
+        self.sock = None
+        self.sock_file = None
+
+    def open_connection(self):
+        """Open the socket and prepare the file-like object."""
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.connect((self.host, self.port))
+            self.sock_file = self.sock.makefile('r')
+        except Exception as e:
+            raise Exception("Could not connect to {}: {}".format(self.host, e))
+
+    def read_line(self):
+        """Read a single line from the socket."""
+        if self.sock_file:
+            return self.sock_file.readline().strip()
+        else:
+            raise ValueError("Connection is not open. Call open_connection first.")
+
+    def read_to_eof(self):
+        """Read all remaining content until EOF."""
+        if self.sock_file:
+            return self.sock_file.read()
+        else:
+            raise ValueError("Connection is not open. Call open_connection first.")
+
+    def close_connection(self):
+        """Close the socket and associated file."""
+        if self.sock_file:
+            self.sock_file.close()
+        if self.sock:
+            self.sock.close()
 
 class MqttDispatcher:
     """
@@ -24,19 +87,22 @@ class MqttDispatcher:
     :param logger: Logger object to use
     :param cafile: The file containing trusted CA certificates.  Specifying this will enable SSL/TLS encryption to the MQTT broker
     """
-    def __init__(self, mochad_host, dispatch_uri, logger, cafile):
+    def __init__(self, mochad_host, dispatch_uri, logger, cafile, killer):
         uri = urllib.parse.urlparse(dispatch_uri)
         self.mochad_host = mochad_host
         self.logger = logger
+        self.killer = killer
         self.host = uri.hostname
         self.port = uri.port if uri.port else 1883
         mqtt_client_id = "mochadc/{}-{}".format(os.getpid(),
                                                 socket.gethostname())
-        self.mqttc = mqtt.Client(mqtt_client_id)
+        self.logger.info(f"mqtt_client_id: {mqtt_client_id}, mqtt host: {self.host}, mqtt port: {self.port}")
+        self.mqttc = mqtt.Client(CallbackAPIVersion.VERSION2, mqtt_client_id)
 
+        self.logger.info("self.mqttc: {}".format(self.mqttc))
         # connection error handling
         self.reconnect_time = -1
-        def on_connect(client, userdata, flags, rc):
+        def on_connect(client, userdata, flags, rc, properties):
             self.reconnect_time = 0
 
         def on_disconnect(client, userdata, rc):
@@ -46,9 +112,8 @@ class MqttDispatcher:
                 # on_connect that means the socket initially connected but
                 # failed BEFORE gettin got he MQTT-specific negotiation.  To my
                 # knowledge only SSL happens in between those two
-                self.logger.error(
-"Could not connect to MQTT broker: possibly SSL/TLS failure")
-                os.kill(os.getpid(), signal.SIGTERM)
+                self.logger.error("Could not connect to MQTT broker: possibly SSL/TLS failure")
+                self.killer.do_kill_now()
             elif self.reconnect_time == 0:
                 self.reconnect_time = time.time()
 
@@ -65,7 +130,7 @@ class MqttDispatcher:
             raise Exception("Could not connect to MQTT broker: {}".format(e))
         self.mqttc.loop_start()
 
-    @asyncio.coroutine
+
     def dispatch_message(self, addr, message_dict, kind):
         """
         Publish, in json format, a dict to an MQTT broker
@@ -88,23 +153,23 @@ class MqttDispatcher:
         result, mid = self.mqttc.publish(topic, payload, qos=qos, retain=retain)
         pass
 
-    @asyncio.coroutine
-    def watchdog(self, loop):
+
+    def watchdog(self):
         """
         Continually watches the MQTT broker connection health.  Exits gracefully if the connection is retried for 60 seconds straight without success.
 
         Why not just do this in the on_disconnect callback?  The on_disconnect callback is not called while loop_start/loop_forever is doing an automatic reconnect.  This makes it impossible to use on_disconnect to handle reconnect issues in the loop_start/loop_forever functions.
         """
-        while True:
+        while self.killer.kill_now == False:
             if (self.reconnect_time > 0 and 
                 time.time() - self.reconnect_time > 60):
 
                 self.logger.error(
                       "Could not reconnect to MQTT broker after 60s")
-                loop.stop()
+                self.killer.do_kill_now()
                 break
             else:
-                yield from asyncio.sleep(1)
+                time.sleep(1)
 
 class MochadClient:
     """
@@ -117,13 +182,16 @@ class MochadClient:
     :param dispatcher: object to use for dispatching messages.  Must be MqttDispatcher
     
     """
-    def __init__(self, host, logger, dispatcher):
+    def __init__(self, host, logger, dispatcher, house_codes, killer):
         self.host = host
         self.logger = logger
         self.reconnect_time = -1
         self.reader = None
-        self.writer = None
         self.dispatcher = dispatcher
+        self.house_codes = house_codes
+        self.killer = killer
+        self.pl_houseunit = None
+        self.reader = None
 
     def parse_mochad_line(self, line):
         """
@@ -149,12 +217,28 @@ class MochadClient:
             # decode RF message. format is:
             #   02/13 23:54:28 Rx RF HouseUnit: B1 Func: On
             line_list = line.split(' ')
-            house_code = line_list[5];
-            house_func = line_list[7]
+            house_code = line_list[5]
+            hc = house_code[0:1]
+            if hc in self.house_codes:
+                house_func = line_list[7]
+                return house_code, {'func': house_func}, 'button'
 
-            return house_code, {'func': house_func}, 'button'
+        elif line[15:20] == 'Rx PL':
 
-        return '', ''
+            # decode PL message. format is in 2 parts:
+            #   02/13 23:54:28 Rx PL HouseUnit: B1
+            #   02/13 23:54:28 Rx PL House: B Func: On
+            line_list = line.split(' ')
+            if line_list[4] == 'HouseUnit:':
+                hc = line_list[5][0:1]
+                if hc in self.house_codes:
+                    self.pl_houseunit = line_list[5]
+            if line_list[4] == 'House:' and self.pl_houseunit != None:
+                house_func = line_list[7]
+                house_unit = self.pl_houseunit
+                return house_unit, {'func': house_func}, 'button'
+        
+        return '', '', ''
 
 
     def decode_func(self, raw_func):
@@ -234,45 +318,46 @@ class MochadClient:
 
         return func_dict
 
-    @asyncio.coroutine
     def connect(self):
         """
         Connect to mochad
         """
-        connection = asyncio.open_connection(self.host, 1099)
-        self.reader, self.writer = yield from connection
 
-    @asyncio.coroutine
+        self.reader = SocketReader(self.host, 1099)
+        try:
+            self.reader.open_connection()
+        except Exception as e:
+            self.logger.error("Could not connect to mochad: {}".format(e))
+            raise
+
     def dispatch_message(self, addr, message_dict, kind):
         """
         Use dispatcher object to dispatch decoded RFSEC message
         """
         try:
-            yield from self.dispatcher.dispatch_message(addr, message_dict, kind)
+            self.dispatcher.dispatch_message(addr, message_dict, kind)
         except Exception as e:
             self.logger.error(
                   "Failed to dispatch mochad message {}: {}".format(
                   message_dict, e))
 
-    @asyncio.coroutine
-    def worker(self, loop):
+    def worker(self):
         """
         Maintain the connection to mochad, read output from mochad and dispatch any RFSEC messages
         """
         # CONNECTION LOOP
-        while True:
+        while self.killer.kill_now == False:
             # if we are in reconnect status, sleep before connecting
             if self.reconnect_time > 0:
-                yield from asyncio.sleep(1)
+                time.sleep(1)
 
                 # if we've been reconnecting for over 60s, bail out
                 if (time.time() - self.reconnect_time) > 60:
                     self.logger.error("Could not reconnect to mochad after 60s")
-                    loop.stop()
                     break
 
             try:
-                yield from self.connect()
+                self.connect()
             except OSError as e:
                 if self.reconnect_time == 0:
                     self.reconnect_time = time.time()
@@ -282,7 +367,7 @@ class MochadClient:
                 elif self.reconnect_time == -1:
                     self.logger.error(
                           "Could not connect to mochad: {}".format(e))
-                    loop.stop()
+                    self.killer.do_kill_now()
                     break
 
                 # keep trying to reconnect
@@ -295,14 +380,14 @@ class MochadClient:
 
             # READ FROM NETWORK LOOP
             while True:
-                line = yield from self.reader.readline()
+                line = self.reader.read_line()
                 # an empty string means connection lost, exit read loop
-                if not line and self.reader.at_eof():
+                if not line:
                     break
                 # parse the line
                 try:
                     addr, message_dict, kind = self.parse_mochad_line(
-                          line.decode("utf-8").rstrip())
+                          line.rstrip())
                 except Exception as e:
                     self.logger.error(
                           "Failed to parse mochad message {}: {}".format(
@@ -315,7 +400,7 @@ class MochadClient:
                     message_dict['dispatch_time'] = datetime.now(
                           pytz.UTC).isoformat()
 
-                    asyncio.async(self.dispatch_message(addr, message_dict, kind))
+                    self.dispatch_message(addr, message_dict, kind)
 
 
             # we broke out of the read loop: we got disconnected, retry connect
@@ -326,44 +411,58 @@ def daemon_main():
     """
     Main function which will be executed by Daemonize after initializing
     """
-    # handle SIGTERM gracefully
-    signal.signal(signal.SIGTERM, sigterm)
+    global main_logger, killer, args
+
+    main_logger.debug("daemon_main()")
 
     try:
+        main_logger.info(f"dispatcher_type({args.server}, {args.dispatch_uri}, logger, {args.cafile}), killer")
         dispatcher = dispatcher_type(args.server,
                                      args.dispatch_uri,
-                                     daemon.logger,
-                                     args.cafile)
+                                     main_logger,
+                                     args.cafile,
+                                     killer)
+        main_logger.debug("dispatcher 1: {}".format(dispatcher))
     except Exception as e:
-        daemon.logger.error("Startup error: {}".format(e))
+        main_logger.error("Startup error: {}".format(e))
         sys.exit(1)
-    mochad_client = MochadClient(args.server, daemon.logger, dispatcher)
-    global loop
-    loop = asyncio.get_event_loop()
-    # dispatcher.watchdog() runs continuously to monitor the dispatcher's health
-    # and act on any problems asyncronously
-    asyncio.async(dispatcher.watchdog(loop))
-    asyncio.async(mochad_client.worker(loop))
-    loop.run_forever()
+    main_logger.debug("dispatcher 2: {}".format(dispatcher))
+    mochad_client = MochadClient(args.server, main_logger, dispatcher, args.housecodes.upper(), killer)
 
-def sigterm(signum, frame):
-    """
-    Signal handler for SIGTERM messages.  Allows graceful exit on SIGTERM.
-    """
-    loop.stop()
+    main_logger.info("start task dispatcher.watchdog()")
+    dispacther_watchdog_task_handle = threading.Thread(target=dispatcher.watchdog)
+    dispacther_watchdog_task_handle.daemon = (
+        True  # Daemon threads will shut down when the main process exits
+    )
+    dispacther_watchdog_task_handle.start()
+
+    main_logger.info("start task mochad_client.worker()")
+    mochad_client_worker_task_handle = threading.Thread(target=mochad_client.worker)
+    mochad_client_worker_task_handle.daemon = (
+        True  # Daemon threads will shut down when the main process exits
+    )
+    mochad_client_worker_task_handle.start()
+
+    while killer.kill_now == False:
+        time.sleep(2)
 
 def errordie(message):
     """
     Print error message then quit with exit code
     """
+    global main_logger
     prog = os.path.basename(sys.argv[0])
-    sys.stderr.write("{}: error: {}\n".format(prog, message))
+    main_logger.error("{}: error: {}\n".format(prog, message))
     sys.exit(1)
 
 def main():
     """
     Main entry point into mochad_dispatch.  Processes command line arguments then hands off to Daemonize and MochadClient
     """
+    global args, dispatcher_type, main_logger, base_path, killer
+
+    killer = GracefulKiller()
+
     # parse command line args
     parser = argparse.ArgumentParser()
     parser.add_argument('-s', '--server', default="127.0.0.1",
@@ -373,26 +472,49 @@ def main():
           help="Don't fork; run in foreground (for debugging)")
     parser.add_argument('--cafile',
           help="File containing trusted CA certificates")
+    parser.add_argument('-c', '--housecodes', default="ABCDEFGHIJKLMNOP",
+          help="House codes for X10 devices (default ABCDEFGHIJKLMNOP)")
     parser.add_argument('dispatch_uri', help='dispatch messages to this URI')
-    global args
+
     args = parser.parse_args()
+
+    if base_path is None:
+        base_path = os.path.abspath("./")
+
+    main_logger = logging.getLogger("mochad_dispatch")
+    main_logger.setLevel(logging.INFO)
+    # create console handler and set level to debug
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+
+    # create formatter
+    formatter = logging.Formatter("%(asctime)s %(name)s: %(levelname)s: %(message)s")
+
+    # add formatter to ch
+    ch.setFormatter(formatter)
+
+    # add ch to logger
+    main_logger.addHandler(ch)
+    main_file_handler = RotatingFileHandler(
+        os.path.join(base_path, "mochad_dispatch.log"), maxBytes=5000000, backupCount=2
+    )
+    main_file_handler.setLevel(logging.INFO)
+    main_file_handler.setFormatter(formatter)
+    main_logger.addHandler(main_file_handler)
+
+    main_logger.info("Starting mochad_dispatch")
+    main_logger.info("args: {}".format(args))
 
     # set dispatcher type based on dispatch_uri
     uri = urllib.parse.urlparse(args.dispatch_uri)
-    global dispatcher_type
+
     if uri.scheme == 'mqtt':
         dispatcher_type = MqttDispatcher
     else:
         errordie("unsupported URI scheme '{}'".format(uri.scheme))
 
-    # daemonize
-    global daemon
-    pidfile = "/tmp/mochad_dispatch-{}.pid".format(os.getpid())
-    daemon = daemonize.Daemonize(app="mochad_dispatch", 
-                                 pid=pidfile,
-                                 foreground=args.foreground,
-                                 action=daemon_main)
-    daemon.start()
+    daemon_main()
 
 if __name__ == "__main__":
     main()
+    exit(0)
