@@ -1,9 +1,8 @@
 from setuptools import setup
 
-VERSION = '0.1.9'
+VERSION = '0.2.1'
 
 REQUIRES = [
-    'daemonize',
     'paho-mqtt',
     'pytz',
 ]
