@@ -1,6 +1,6 @@
 from setuptools import setup
 
-VERSION = "0.2.1.post3"
+VERSION = "0.2.1"
 
 REQUIRES = [
     "paho-mqtt",
