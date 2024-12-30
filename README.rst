@@ -76,6 +76,7 @@ To change the mqtt category for the MQTT discovery to not use the default "homea
 
 Also, through configuration in Home Assistant for the X10 security devices, you can use configure this under the '''mqtt:''' heading. See https://www.home-assistant.io/integrations/alarm_control_panel.mqtt/
 ::
+    
 mqtt:
   - alarm_control_panel:
       name: "Alarm Panel"
