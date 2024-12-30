@@ -12,7 +12,6 @@ It will automatically reconnect to both mochad and the MQTT broker.  However, if
 
 Usage description
 -----------------
-'''
 usage: main.py [-h] [-s SERVER] [-f] [-l] [-m MQTT_DISCOVERY] [--cafile CAFILE] [-c HOUSECODES] dispatch_uri
 
 positional arguments:
@@ -29,7 +28,6 @@ optional arguments:
   --cafile CAFILE       File containing trusted CA certificates
   -c HOUSECODES, --housecodes HOUSECODES
                         House codes for X10 devices (default ABCDEFGHIJKLMNOP)
-'''
 
 How do I use it?
 ================
@@ -77,13 +75,12 @@ To change the mqtt category for the MQTT discovery to not use the default "homea
     $ mochad_dispatch -s hal9000 -c AD --mqtt-discovery homeassistant/5A0uqYZF2_mochad_dispatch mqtt://mqtt.example.com:1883
 
 Also, through configuration in Home Assistant for the X10 security devices, you can use configure this under the '''mqtt:''' heading. See https://www.home-assistant.io/integrations/alarm_control_panel.mqtt/
-'''
+::
 mqtt:
   - alarm_control_panel:
       name: "Alarm Panel"
       state_topic: "X10/hal9000/security/C8:21:B2"
       value_template: "{{value_json.command}}"
-'''
 
 Troubleshooting
 ===============
