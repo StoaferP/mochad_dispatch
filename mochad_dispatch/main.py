@@ -157,7 +157,6 @@ class MqttDispatcher:
             raise Exception("Could not connect to MQTT broker: {}".format(e))
         self.mqttc.loop_start()
 
-
     def dispatch_message(self, addr, message_dict, kind):
         """
         Publish, in json format, a dict to an MQTT broker
@@ -255,7 +254,7 @@ class MochadClient:
     :param host: IP/hostname of system running mochad
     :param logger: Logger object to use
     :param dispatcher: object to use for dispatching messages.  Must be MqttDispatcher
-    
+
     """
     def __init__(self, host, logger, dispatcher, house_codes, killer, legacy):
         self.host = host
@@ -273,6 +272,8 @@ class MochadClient:
         """
         Parse a raw line of output from mochad
         """
+        if type(line) == bytes:
+            line = line.decode()
         # bail out unless it's an incoming RFSEC message
         if line[15:23] == 'Rx RFSEC':
 
@@ -288,10 +289,11 @@ class MochadClient:
 
             return addr, func_dict, 'security'
 
-        elif line[15:20] == 'Rx RF':
+        elif line[16:20] == 'x RF':
 
             # decode RF message. format is:
             #   02/13 23:54:28 Rx RF HouseUnit: B1 Func: On
+            #   12/15 21:30:45 Tx RF HouseUnit: A4 Func: On\n
             line_list = line.split(' ')
             house_code = line_list[5]
             hc = house_code[0:1]
@@ -441,6 +443,7 @@ class MochadClient:
 
 
     def worker(self):
+
         """
         Maintain the connection to mochad, read output from mochad and dispatch any RFSEC messages
         """
@@ -492,16 +495,14 @@ class MochadClient:
                     self.logger.error(
                           "Failed to parse mochad message {}: {}".format(
                           line, e))
-                    continue 
+                    continue
 
                 # addr/func will be blank when we have nothing to dispatch
                 if addr and message_dict:
                     # we don't to use mochad's timestamp because it lacks a year
                     message_dict['dispatch_time'] = datetime.now(
                           pytz.UTC).isoformat()
-
                     self.dispatch_message(addr, message_dict, kind)
-
 
             # we broke out of the read loop: we got disconnected, retry connect
             self.logger.warn("Lost connection to mochad. Retrying.")
