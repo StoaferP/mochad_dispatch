@@ -39,6 +39,15 @@ class GracefulKiller:
     def do_kill_now(self):
         os.kill(os.getpid(), signal.SIGTERM)
 
+    def errordie(self, message):
+        """
+        Print error message then quit with exit code
+        """
+        global main_logger
+        prog = os.path.basename(sys.argv[0])
+        main_logger.error("{}: error: {}\n".format(prog, message))
+        self.do_kill_now()
+
 class SocketReader:
     def __init__(self, host, port):
         self.host = host
@@ -87,7 +96,7 @@ class MqttDispatcher:
     :param logger: Logger object to use
     :param cafile: The file containing trusted CA certificates.  Specifying this will enable SSL/TLS encryption to the MQTT broker
     """
-    def __init__(self, mochad_host, dispatch_uri, logger, cafile, killer):
+    def __init__(self, mochad_host, dispatch_uri, logger, cafile, killer, legacy, mqtt_discovery):
         use_password = False
         if ',' in dispatch_uri:
             real_uri = dispatch_uri.split(',')[0]
@@ -102,6 +111,10 @@ class MqttDispatcher:
         self.mochad_host = mochad_host
         self.logger = logger
         self.killer = killer
+        self.legacy = legacy
+        self.mqtt_discovery = mqtt_discovery.split('/')[0]
+        self.mqtt_ha_id = mqtt_discovery.split('/')[1]
+        self.devices_discovered = {}
         self.host = uri.hostname
         self.port = uri.port if uri.port else 1883
         mqtt_client_id = "mochadc/{}-{}".format(os.getpid(),
@@ -149,17 +162,34 @@ class MqttDispatcher:
         """
         Publish, in json format, a dict to an MQTT broker
         """
-        # X10 topic format
-        #    X10/MOCHAD_HOST/security/DEVICE_ADDRESS
-        #
-        # (based on discussion at below URL)
-        # https://groups.google.com/forum/#!topic/homecamp/sWqHvQnLvV0
-        topic = "X10/{}/{}/{}".format(
-              self.mochad_host, kind, addr)
-        payload = json.dumps(message_dict)
-        # Distinguish between status messages (security) and
-        # button presses per Andy Stanford-Clark's suggestion at
-        # https://groups.google.com/d/msg/mqtt/rIp1uJsT9Nk/7YOWNCQO3ZEJ
+        if self.legacy:
+            # X10 topic format
+            #    X10/MOCHAD_HOST/security/DEVICE_ADDRESS
+            #
+            # (based on discussion at below URL)
+            # https://groups.google.com/forum/#!topic/homecamp/sWqHvQnLvV0
+            topic = f"X10/{self.mochad_host}/{kind}/{addr}"
+            payload = json.dumps(message_dict)
+            # Distinguish between status messages (security) and
+            # button presses per Andy Stanford-Clark's suggestion at
+            # https://groups.google.com/d/msg/mqtt/rIp1uJsT9Nk/7YOWNCQO3ZEJ
+        else:
+            if self.devices_discovered.get(addr) is None:
+                self.devices_discovered[addr] = True
+                self.dispatch_mqtt_discovery(kind, addr)
+                time.sleep(1)
+            
+            # Home Assistant MQTT auto discovery format
+            #    homeassistant/device_automation/HA_ID/mochad_dispatch/config
+            #    {
+            #        "action": "publish",
+            #        "topic": "X10/mqtt_ha_id/button/DEVICE_ADDRESS",
+            #        "payload": {
+            #            "state": "ON"
+            #        }
+            #    }
+            topic = f"X10/{self.mqtt_ha_id}/{kind}/{addr}"
+            payload = json.dumps(message_dict)
         if kind == 'button':
             qos, retain = 0, False
         else:
@@ -167,6 +197,37 @@ class MqttDispatcher:
         result, mid = self.mqttc.publish(topic, payload, qos=qos, retain=retain)
         pass
 
+    def dispatch_mqtt_discovery(self, kind, addr):
+        """
+        Publish Home Assistant MQTT discovery message
+        """
+        topic = f"X10/{self.mqtt_ha_id}/{kind}/{addr}"
+        dev_id = f"{self.mqtt_ha_id}_{addr}"
+        cmp_id = f"{dev_id}_state"
+        payload = {"device": {
+                       "identifiers":dev_id,
+                       "name":dev_id,
+                       "model":"mochad_dispatch",
+                       "manufacturer":"mochad_dispatch"
+                    },
+                   "origin": {
+                       "name": "mochad_dispatch",
+                       "url": "https://github.com/StoaferP/mochad_dispatch"
+                   },
+                   "cmps": {
+                       cmp_id: {
+                           "p": "binary_sensor",
+                           "value_template": "{{ value_json.state }}",
+                           "unique_id": f"{dev_id}_{kind}",
+                       }
+                   },
+                   "state_topic": topic
+                  }
+        config_topic = f"{self.mqtt_discovery}/device/{self.mqtt_ha_id}/{addr}/config"
+
+        qos, retain = 1, True
+        result, mid = self.mqttc.publish(config_topic, json.dumps(payload), qos=qos, retain=retain)
+        pass
 
     def watchdog(self):
         """
@@ -196,7 +257,7 @@ class MochadClient:
     :param dispatcher: object to use for dispatching messages.  Must be MqttDispatcher
     
     """
-    def __init__(self, host, logger, dispatcher, house_codes, killer):
+    def __init__(self, host, logger, dispatcher, house_codes, killer, legacy):
         self.host = host
         self.logger = logger
         self.reconnect_time = -1
@@ -204,6 +265,7 @@ class MochadClient:
         self.dispatcher = dispatcher
         self.house_codes = house_codes
         self.killer = killer
+        self.legacy = legacy
         self.pl_houseunit = None
         self.reader = None
 
@@ -224,7 +286,7 @@ class MochadClient:
 
             func_dict = self.decode_func(func)
 
-            return addr, {'func': func_dict}, 'security'
+            return addr, func_dict, 'security'
 
         elif line[15:20] == 'Rx RF':
 
@@ -235,7 +297,7 @@ class MochadClient:
             hc = house_code[0:1]
             if hc in self.house_codes:
                 house_func = line_list[7]
-                return house_code, {'func': house_func}, 'button'
+                return house_code, self.create_state_payload(house_func), 'button'
 
         elif line[15:20] == 'Rx PL':
 
@@ -250,10 +312,19 @@ class MochadClient:
             if line_list[4] == 'House:' and self.pl_houseunit != None:
                 house_func = line_list[7]
                 house_unit = self.pl_houseunit
-                return house_unit, {'func': house_func}, 'button'
+                return house_unit, self.create_state_payload(house_func), 'button'
         
         return '', '', ''
 
+    def create_state_payload(self, the_function):
+        """
+        Create a state payload for messages dispatched to MQTT. This will use the legacy flag to determine the format of the payload
+        """
+        if self.legacy:
+            payload = {'func': the_function}
+        else:
+            payload = {'state': the_function.upper()}
+        return payload
 
     def decode_func(self, raw_func):
         """
@@ -299,17 +370,26 @@ class MochadClient:
                 func_dict['command'] = 'arm'
             # Arm system in Home mode
             elif func_list[i] == 'Arm' and func_list[i+1] == 'Home':
-                func_dict['command'] = 'arm_home'
+                if self.legacy:
+                    func_dict['command'] = 'arm_home'
+                else:
+                    func_dict['command'] = 'armed_home'
                 # skip over 'Home' in func_list
                 i += 1
             # Arm system in Away mode
             elif func_list[i] == 'Arm' and func_list[i+1] == 'Away':
-                func_dict['command'] = 'arm_away'
+                if self.legacy:
+                    func_dict['command'] = 'arm_away'
+                else:
+                    func_dict['command'] = 'armed_away'
                 # skip over 'Away' in func_list
                 i += 1
             # Disarm system
             elif func_list[i] == 'Disarm':
-                func_dict['command'] = 'disarm'
+                if self.legacy:
+                    func_dict['command'] = 'disarm'
+                else:
+                    func_dict['command'] = 'disarming'
             # Panic
             elif func_list[i] == 'Panic':
                 func_dict['command'] = 'panic'
@@ -337,6 +417,10 @@ class MochadClient:
         Connect to mochad
         """
 
+        if self.reader is not None:
+            self.reader.close_connection()
+            self.reader = None
+
         self.reader = SocketReader(self.host, 1099)
         try:
             self.reader.open_connection()
@@ -355,10 +439,12 @@ class MochadClient:
                   "Failed to dispatch mochad message {}: {}".format(
                   message_dict, e))
 
+
     def worker(self):
         """
         Maintain the connection to mochad, read output from mochad and dispatch any RFSEC messages
         """
+
         # CONNECTION LOOP
         while self.killer.kill_now == False:
             # if we are in reconnect status, sleep before connecting
@@ -425,9 +511,9 @@ def daemon_main():
     """
     Main function which will be executed by Daemonize after initializing
     """
-    global main_logger, killer, args
+    global main_logger, killer, args, dispatcher_type
 
-    main_logger.info("daemon_main()")
+    main_logger.info("Start daemon_main()")
 
     try:
         main_logger.debug(f"dispatcher_type({args.server}, {args.dispatch_uri}, logger, {args.cafile}), killer")
@@ -435,22 +521,24 @@ def daemon_main():
                                      args.dispatch_uri,
                                      main_logger,
                                      args.cafile,
-                                     killer)
-        main_logger.debug("dispatcher 1: {}".format(dispatcher))
+                                     killer,
+                                     args.legacy,
+                                     args.mqtt_discovery)
+        main_logger.debug("Created dispatcher: {}".format(dispatcher))
     except Exception as e:
-        main_logger.error("Startup error: {}".format(e))
-        sys.exit(1)
-    main_logger.debug("dispatcher 2: {}".format(dispatcher))
-    mochad_client = MochadClient(args.server, main_logger, dispatcher, args.housecodes.upper(), killer)
+        killer.errordie(f"Startup error: Could not create dispatcher {e}")
 
-    main_logger.info("start task dispatcher.watchdog()")
+    main_logger.debug("Create Mochad Client: {}".format(dispatcher))
+    mochad_client = MochadClient(args.server, main_logger, dispatcher, args.housecodes.upper(), killer, args.legacy)
+
+    main_logger.info("Start task dispatcher.watchdog()")
     dispacther_watchdog_task_handle = threading.Thread(target=dispatcher.watchdog)
     dispacther_watchdog_task_handle.daemon = (
         True  # Daemon threads will shut down when the main process exits
     )
     dispacther_watchdog_task_handle.start()
 
-    main_logger.info("start task mochad_client.worker()")
+    main_logger.info("Start task mochad_client.worker()")
     mochad_client_worker_task_handle = threading.Thread(target=mochad_client.worker)
     mochad_client_worker_task_handle.daemon = (
         True  # Daemon threads will shut down when the main process exits
@@ -459,15 +547,6 @@ def daemon_main():
 
     while killer.kill_now == False:
         time.sleep(2)
-
-def errordie(message):
-    """
-    Print error message then quit with exit code
-    """
-    global main_logger
-    prog = os.path.basename(sys.argv[0])
-    main_logger.error("{}: error: {}\n".format(prog, message))
-    sys.exit(1)
 
 def main():
     """
@@ -480,15 +559,21 @@ def main():
     # parse command line args
     parser = argparse.ArgumentParser()
     parser.add_argument('-s', '--server', default="127.0.0.1",
-          help="IP/host of server running mochad (default 127.0.0.1)")
+            help="IP/host of server running mochad (default 127.0.0.1)")
     parser.add_argument('-f', '--foreground',
-          action='store_true', default=False,
-          help="Don't fork; run in foreground (for debugging)")
+            action='store_true', default=False,
+            help="Don't fork; run in foreground (for debugging)")
+    parser.add_argument('-l', '--legacy',
+            action='store_true', default=False,
+            help="Use legacy X10 topic format (default is HomeAssistant MQTT auto discovery format)")
+    parser.add_argument('-m', '--mqtt-discovery', default="homeassistant/5A0uqYZF2_mochad_dispatch",
+            help="MQTT discovery for Home Assistant (default homeassistant/5A0uqYZF2_mochad_dispatch)")
     parser.add_argument('--cafile',
-          help="File containing trusted CA certificates")
+            help="File containing trusted CA certificates")
     parser.add_argument('-c', '--housecodes', default="ABCDEFGHIJKLMNOP",
-          help="House codes for X10 devices (default ABCDEFGHIJKLMNOP)")
-    parser.add_argument('dispatch_uri', help='dispatch messages to this URI')
+            help="House codes for X10 devices (default ABCDEFGHIJKLMNOP)")
+    parser.add_argument('dispatch_uri',
+            help='dispatch messages to this URI. mqtt://host:port[,user=username,pass=password]')
 
     args = parser.parse_args()
 
@@ -525,7 +610,7 @@ def main():
     if uri.scheme == 'mqtt':
         dispatcher_type = MqttDispatcher
     else:
-        errordie("unsupported URI scheme '{}'".format(uri.scheme))
+        killer.errordie("unsupported URI scheme '{}'".format(uri.scheme))
 
     daemon_main()
 
