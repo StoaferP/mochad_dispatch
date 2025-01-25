@@ -10,6 +10,25 @@ What exactly does it do?
 
 It will automatically reconnect to both mochad and the MQTT broker.  However, if a reconnect attempt fails for 60 seconds straight, **mochad_dispatch** will give up and exit.
 
+Usage description
+-----------------
+usage: main.py [-h] [-s SERVER] [-f] [-l] [-m MQTT_DISCOVERY] [--cafile CAFILE] [-c HOUSECODES] dispatch_uri
+
+positional arguments:
+  dispatch_uri          dispatch messages to this URI. mqtt://host:port[,user=username,pass=password]
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -s SERVER, --server SERVER
+                        IP/host of server running mochad (default 127.0.0.1)
+  -f, --foreground      Don't fork; run in foreground (for debugging)
+  -l, --legacy          Use legacy X10 topic format (default is HomeAssistant MQTT auto discovery format)
+  -m MQTT_DISCOVERY, --mqtt-discovery MQTT_DISCOVERY
+                        MQTT discovery for Home Assistant (default homeassistant/5A0uqYZF2_mochad_dispatch)
+  --cafile CAFILE       File containing trusted CA certificates
+  -c HOUSECODES, --housecodes HOUSECODES
+                        House codes for X10 devices (default ABCDEFGHIJKLMNOP)
+
 How do I use it?
 ================
 Run mochad_dispatch with a mochad hostname and a MQTT URI
@@ -43,7 +62,27 @@ You can also add filtering by house code as well using the -c/--housecodes optin
 ::
     
     $ mochad_dispatch -s hal9000 -c AD mqtt://mqtt.example.com:1883
-    
+
+Home Assistant Integration
+==========================
+Mochad Dispatch has the ability to dynamcally add binary sensors for state of devices. This is the defualt opertaion. These devices can used to trigger other automations.
+
+To switch off the Home Addistant integration through MQTT discovery, use -l/--legacy option.
+
+To change the mqtt category for the MQTT discovery to not use the default "homeassistant" or change the unique id for the node default of 5A0uqYZF2_mochad_dispatch
+::
+
+    $ mochad_dispatch -s hal9000 -c AD --mqtt-discovery homeassistant/5A0uqYZF2_mochad_dispatch mqtt://mqtt.example.com:1883
+
+Also, through configuration in Home Assistant for the X10 security devices, you can use configure this under the '''mqtt:''' heading. See https://www.home-assistant.io/integrations/alarm_control_panel.mqtt/
+::
+
+    mqtt:
+    - alarm_control_panel:
+        name: "Alarm Panel"
+        state_topic: "X10/hal9000/security/C8:21:B2"
+        value_template: "{{value_json.command}}"
+
 Troubleshooting
 ===============
 mochad_dispatch has been tested with mochad 0.1.17 and Mosquitto 1.4.3
