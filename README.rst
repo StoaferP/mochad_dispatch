@@ -12,22 +12,24 @@ It will automatically reconnect to both mochad and the MQTT broker.  However, if
 
 Usage description
 -----------------
-usage: main.py [-h] [-s SERVER] [-f] [-l] [-m MQTT_DISCOVERY] [--cafile CAFILE] [-c HOUSECODES] dispatch_uri
+::
 
-positional arguments:
-  dispatch_uri          dispatch messages to this URI. mqtt://host:port[,user=username,pass=password]
+    usage: mochad_dispatch [-h] [-s SERVER] [-f] [-l] [-m MQTT_DISCOVERY] [--cafile CAFILE] [-c HOUSECODES] dispatch_uri
 
-optional arguments:
-  -h, --help            show this help message and exit
-  -s SERVER, --server SERVER
-                        IP/host of server running mochad (default 127.0.0.1)
-  -f, --foreground      Don't fork; run in foreground (for debugging)
-  -l, --legacy          Use legacy X10 topic format (default is HomeAssistant MQTT auto discovery format)
-  -m MQTT_DISCOVERY, --mqtt-discovery MQTT_DISCOVERY
-                        MQTT discovery for Home Assistant (default homeassistant/5A0uqYZF2_mochad_dispatch)
-  --cafile CAFILE       File containing trusted CA certificates
-  -c HOUSECODES, --housecodes HOUSECODES
-                        House codes for X10 devices (default ABCDEFGHIJKLMNOP)
+    positional arguments:
+    dispatch_uri          dispatch messages to this URI. mqtt://host:port[,user=username,pass=password]
+
+    options:
+    -h, --help            show this help message and exit
+    -s SERVER, --server SERVER
+                            IP/host of server running mochad (default 127.0.0.1)
+    -f, --foreground      Don't fork; run in foreground (for debugging)
+    -l, --legacy          Use legacy X10 topic format (default is HomeAssistant MQTT auto discovery format)
+    -m MQTT_DISCOVERY, --mqtt-discovery MQTT_DISCOVERY
+                            MQTT discovery for Home Assistant (default homeassistant/5A0uqYZF2_mochad_dispatch)
+    --cafile CAFILE       File containing trusted CA certificates
+    -c HOUSECODES, --housecodes HOUSECODES
+                            House codes for X10 devices (default ABCDEFGHIJKLMNOP)
 
 How do I use it?
 ================
