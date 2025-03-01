@@ -1,6 +1,6 @@
 from setuptools import setup
 
-VERSION = "1.0.0-rc1"
+VERSION = "1.0.0"
 
 REQUIRES = [
     "paho-mqtt",
@@ -12,9 +12,7 @@ setup(
     version=VERSION,
     description="mochad_dispatch is a daemon written in Python that translates mochad's tcp-based events to MQTT messages",
     url="https://github.com/StoaferP/mochad_dispatch",
-    download_url="https://github.com/StoaferP/mochad_dispatch/archive/{}.zip".format(
-        VERSION
-    ),
+    download_url="https://github.com/StoaferP/mochad_dispatch/archive/{}.zip".format(VERSION),
     author="Chris Przybycien",
     author_email="chrisisdiy@gmail.com",
     license="MIT",
